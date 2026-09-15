@@ -13,5 +13,26 @@ struct typecaseApp: App {
         WindowGroup {
             ContentView()
         }
+        .defaultSize(width: 1280, height: 760)
+        .windowResizability(.contentMinSize)
+        .commands {
+            CommandGroup(after: .newItem) {
+                Button("Add Font Folder…") {
+                    NotificationCenter.default.post(name: .addFontFolder, object: nil)
+                }
+                .keyboardShortcut("o", modifiers: [.command, .shift])
+            }
+            CommandGroup(after: .sidebar) {
+                Button("Refresh Font Library") {
+                    NotificationCenter.default.post(name: .refreshFontLibrary, object: nil)
+                }
+                .keyboardShortcut("r", modifiers: .command)
+            }
+        }
     }
+}
+
+extension Notification.Name {
+    static let addFontFolder = Notification.Name("addFontFolder")
+    static let refreshFontLibrary = Notification.Name("refreshFontLibrary")
 }
