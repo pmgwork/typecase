@@ -28,7 +28,7 @@ struct typecaseApp: App {
             }
             CommandGroup(after: .sidebar) {
                 Button("Refresh Font Library") {
-                    NotificationCenter.default.post(name: .refreshFontLibrary, object: nil)
+                    catalog.refresh()
                 }
                 .keyboardShortcut("r", modifiers: .command)
             }
@@ -38,5 +38,4 @@ struct typecaseApp: App {
 
 extension Notification.Name {
     static let addFontFolder = Notification.Name("addFontFolder")
-    static let refreshFontLibrary = Notification.Name("refreshFontLibrary")
 }

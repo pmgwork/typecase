@@ -72,10 +72,6 @@ final class LibraryViewState: ObservableObject {
         return output
     }
 
-    func sectionIsEmpty(catalog: FontCatalog) -> Bool {
-        filter(catalog: catalog).sectionIsEmpty
-    }
-
     func clearFilters() {
         searchText = ""
         category = nil

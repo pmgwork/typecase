@@ -79,9 +79,6 @@ struct ContentView: View {
             guard window?.isKeyWindow == true else { return }
             catalog.addFolder { url in viewState.librarySelection = .folder(url) }
         }
-        .onReceive(NotificationCenter.default.publisher(for: .refreshFontLibrary)) { _ in
-            catalog.refresh()
-        }
         .task {
             viewState.reconcile(with: catalog)
         }
@@ -314,11 +311,10 @@ private struct FontLibraryView: View {
                 }
                 .listStyle(.inset)
                 // The preview-text editor stays pinned below the list.
-                .safeAreaInset(edge: .bottom, spacing: 0) {
-                    PreviewTextEditor(viewState: viewState)
-                        .padding(.horizontal, 16)
-                        .padding(.bottom, 16)
-                }
+                Divider()
+                PreviewTextEditor(viewState: viewState)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 12)
             }
         }
         .navigationSplitViewColumnWidth(min: 320, ideal: 640)
@@ -589,10 +585,6 @@ private struct FontInspector: View {
                     Divider()
 
                     tagsSection(for: family)
-
-                    Divider()
-
-                    stylesSection(for: family)
                 }
                 .padding(20)
             }
@@ -640,37 +632,6 @@ private struct FontInspector: View {
                     catalog.addTag(newTag, to: family)
                     newTag = ""
                 }
-        }
-    }
-
-    private func stylesSection(for family: FontFamily) -> some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("Styles")
-                .font(.headline)
-            LazyVStack(alignment: .leading, spacing: 16) {
-                ForEach(family.faces) { face in
-                    VStack(alignment: .leading, spacing: 6) {
-                        HStack {
-                            Text(face.styleName)
-                                .font(.callout)
-                                .foregroundStyle(.secondary)
-                            Spacer()
-                            if family.isManaged {
-                                Image(systemName: face.isInstalled ? "circle.inset.filled" : "circle")
-                                    .font(.callout)
-                                    .foregroundStyle(face.isInstalled ? Color.accentColor : Color.secondary)
-                                    .help(face.isInstalled ? "Enabled" : "Disabled")
-                            }
-                        }
-                        FontPreviewText(
-                            text: viewState.previewText(for: family),
-                            postScriptName: face.postScriptName,
-                            fileURL: face.fileURL,
-                            size: 21
-                        )
-                    }
-                }
-            }
         }
     }
 }
@@ -793,7 +754,6 @@ private struct SidebarLabel: View {
 /// list: one text field above a row of sample chips.
 private struct PreviewTextEditor: View {
     @ObservedObject var viewState: LibraryViewState
-    @FocusState private var isFieldFocused: Bool
     @State private var customPresets = UserDefaults.standard.stringArray(forKey: PreviewTextEditor.presetsKey) ?? []
 
     private static let presetsKey = "previewTextPresets"
@@ -814,7 +774,6 @@ private struct PreviewTextEditor: View {
         VStack(alignment: .leading, spacing: 12) {
             TextField("Enter preview text…", text: $viewState.previewText)
                 .textFieldStyle(.roundedBorder)
-                .focused($isFieldFocused)
 
             FlowLayout(spacing: 8) {
                 ForEach(Self.builtInPresets, id: \.title) { preset in
@@ -847,14 +806,7 @@ private struct PreviewTextEditor: View {
                 .accessibilityLabel("Add the current text as a preset")
             }
         }
-        .padding(16)
-        .frame(maxWidth: 720)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .stroke(Color.primary.opacity(0.08), lineWidth: 1)
-        }
-        .shadow(color: .black.opacity(0.25), radius: 14, y: 6)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var trimmedPreviewText: String {

@@ -7,12 +7,10 @@ struct FontPreviewText: View {
     let fileURL: URL?
     let size: CGFloat
     var lines = 1
-    var color: Color = .primary
 
     var body: some View {
         Text(text)
             .font(previewFont)
-            .foregroundStyle(color)
             .lineLimit(lines)
             .truncationMode(.tail)
             .multilineTextAlignment(.leading)

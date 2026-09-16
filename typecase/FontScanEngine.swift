@@ -90,34 +90,39 @@ actor FontScanEngine {
         var currentStamps: [URL: FontFileStamp] = [:]
 
         for root in input.roots {
+            // The enumerator reports a directory's contents, never the directory
+            // itself; include the root so entries added directly in it are seen.
+            let rootPath = root.standardizedFileURL.path
+            if directoryDates[rootPath] == nil {
+                directoryDates[rootPath] = (try? root.resourceValues(forKeys: [.contentModificationDateKey]))?
+                    .contentModificationDate?.timeIntervalSince1970 ?? 0
+            }
+
             var rawFiles: [URL] = []
-            guard let enumerator = FileManager.default.enumerator(
+            if let enumerator = FileManager.default.enumerator(
                 at: root,
                 includingPropertiesForKeys: [.isDirectoryKey, .isRegularFileKey, .contentModificationDateKey, .fileSizeKey],
                 options: [.skipsHiddenFiles, .skipsPackageDescendants]
-            ) else {
-                filesByRoot[root] = []
-                continue
-            }
-
-            for case let url as URL in enumerator {
-                let values = try? url.resourceValues(forKeys: [
-                    .isDirectoryKey, .isRegularFileKey, .contentModificationDateKey, .fileSizeKey,
-                ])
-                if values?.isDirectory == true {
-                    let path = url.standardizedFileURL.path
-                    if directoryDates[path] == nil {
-                        directoryDates[path] = values?.contentModificationDate?.timeIntervalSince1970 ?? 0
+            ) {
+                for case let url as URL in enumerator {
+                    let values = try? url.resourceValues(forKeys: [
+                        .isDirectoryKey, .isRegularFileKey, .contentModificationDateKey, .fileSizeKey,
+                    ])
+                    if values?.isDirectory == true {
+                        let path = url.standardizedFileURL.path
+                        if directoryDates[path] == nil {
+                            directoryDates[path] = values?.contentModificationDate?.timeIntervalSince1970 ?? 0
+                        }
+                        continue
                     }
-                    continue
+                    guard values?.isRegularFile == true,
+                          Self.fontExtensions.contains(url.pathExtension.lowercased()) else { continue }
+                    rawFiles.append(url)
+                    currentStamps[url] = FontFileStamp(
+                        modification: values?.contentModificationDate?.timeIntervalSince1970 ?? 0,
+                        size: Int64(values?.fileSize ?? 0)
+                    )
                 }
-                guard values?.isRegularFile == true,
-                      Self.fontExtensions.contains(url.pathExtension.lowercased()) else { continue }
-                rawFiles.append(url)
-                currentStamps[url] = FontFileStamp(
-                    modification: values?.contentModificationDate?.timeIntervalSince1970 ?? 0,
-                    size: Int64(values?.fileSize ?? 0)
-                )
             }
             filesByRoot[root] = rawFiles
         }
@@ -198,21 +203,31 @@ actor FontScanEngine {
 
     /// A cheap directory-level fingerprint used to catch file system changes that
     /// FSEvents may have missed. Directory modification dates cover added, removed,
-    /// renamed, and replaced entries anywhere in the tree.
+    /// renamed, and replaced entries anywhere in the tree, including each root
+    /// itself. An in-place edit that touches no directory entry still relies on
+    /// FSEvents.
     func directoryFingerprint(roots: [URL]) -> UInt64 {
         var directoryDates: [String: TimeInterval] = [:]
         for root in roots {
+            // The enumerator reports a directory's contents, never the directory
+            // itself; include the root so entries added directly in it are seen.
+            let rootPath = root.standardizedFileURL.path
+            if directoryDates[rootPath] == nil {
+                directoryDates[rootPath] = (try? root.resourceValues(forKeys: [.contentModificationDateKey]))?
+                    .contentModificationDate?.timeIntervalSince1970 ?? 0
+            }
+
             guard let enumerator = FileManager.default.enumerator(
                 at: root,
                 includingPropertiesForKeys: [.isDirectoryKey, .contentModificationDateKey],
                 options: [.skipsHiddenFiles, .skipsPackageDescendants]
             ) else { continue }
             for case let url as URL in enumerator {
-                guard (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true else { continue }
+                let values = try? url.resourceValues(forKeys: [.isDirectoryKey, .contentModificationDateKey])
+                guard values?.isDirectory == true else { continue }
                 let path = url.standardizedFileURL.path
                 guard directoryDates[path] == nil else { continue }
-                directoryDates[path] = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?
-                    .contentModificationDate?.timeIntervalSince1970 ?? 0
+                directoryDates[path] = values?.contentModificationDate?.timeIntervalSince1970 ?? 0
             }
         }
         return Self.fingerprint(directoryDates)

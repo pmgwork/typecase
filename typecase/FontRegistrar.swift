@@ -4,88 +4,69 @@ import Foundation
 nonisolated struct FontRegistrationAction: Sendable {
     let url: URL
     let names: Set<String>
-    /// `true` registers the font for the user (activated); `false` keeps it registered
-    /// for this process only so previews work while the font stays deactivated.
+    /// `true` activates the font for the user; `false` removes that registration.
+    /// Deactivated fonts stay unregistered: previews read the font file directly,
+    /// so no process-scope registration is needed.
     let enabled: Bool
-    /// When `true`, the Core Text calls are skipped if the font is already registered
-    /// in the desired scope. Scans use `false` so a replaced font file is re-registered.
+    /// When `true`, the Core Text call is skipped if the font is already in the
+    /// desired state. Scans use `false` so a replaced font file is re-registered.
     let skipIfAlreadyScoped: Bool
 }
 
 nonisolated struct FontRegistrationOutcome: Sendable {
     let url: URL
     let names: Set<String>
-    let enabled: Bool
     let succeeded: Bool
-    /// For a deactivated font: the process-scope registration used for previews succeeded.
-    let previewRegistered: Bool
     let errorDescription: String?
 }
 
 /// Serializes Core Text font registration away from the main actor.
 ///
 /// All registration goes through this actor so a folder scan and a user toggle
-/// can never interleave their Core Text calls. The actor skips work when the
-/// font is already registered in the desired scope.
+/// can never interleave their Core Text calls. Only user-scope activation is
+/// registered; deactivated fonts are previewed from their file descriptors by
+/// `FontResolver`.
 actor FontRegistrar {
     func synchronize(_ actions: [FontRegistrationAction]) -> [FontRegistrationOutcome] {
         actions.map(perform)
     }
 
     private func perform(_ action: FontRegistrationAction) -> FontRegistrationOutcome {
-        let desired: CTFontManagerScope = action.enabled ? .user : .process
-        if action.skipIfAlreadyScoped, CTFontManagerGetScopeForURL(action.url as CFURL) == desired {
-            return FontRegistrationOutcome(
-                url: action.url,
-                names: action.names,
-                enabled: action.enabled,
-                succeeded: true,
-                previewRegistered: desired == .process,
-                errorDescription: nil
-            )
-        }
+        let url = action.url as CFURL
+        let currentScope = CTFontManagerGetScopeForURL(url)
 
-        var error: Unmanaged<CFError>?
         if action.enabled {
-            CTFontManagerUnregisterFontsForURL(action.url as CFURL, .process, nil)
-            if CTFontManagerRegisterFontsForURL(action.url as CFURL, .user, &error) {
-                return FontRegistrationOutcome(
-                    url: action.url,
-                    names: action.names,
-                    enabled: true,
-                    succeeded: true,
-                    previewRegistered: false,
-                    errorDescription: nil
-                )
+            if currentScope == .user {
+                if action.skipIfAlreadyScoped { return success(action) }
+                // Re-register so Core Text picks up a replaced font file.
+                CTFontManagerUnregisterFontsForURL(url, .user, nil)
             }
-            // Restore the preview registration so the deactivated font can still be previewed.
-            CTFontManagerRegisterFontsForURL(action.url as CFURL, .process, nil)
-            return failure(action, error: error)
+            var error: Unmanaged<CFError>?
+            guard CTFontManagerRegisterFontsForURL(url, .user, &error) else {
+                return failure(action, error: error)
+            }
+            return success(action)
         }
 
-        guard CTFontManagerUnregisterFontsForURL(action.url as CFURL, .user, &error) else {
+        // Deactivation only has to remove the user registration. A font that is
+        // not user-registered is already in the desired state.
+        guard currentScope == .user else { return success(action) }
+        var error: Unmanaged<CFError>?
+        guard CTFontManagerUnregisterFontsForURL(url, .user, &error) else {
             return failure(action, error: error)
         }
-        let previewRegistered = CTFontManagerRegisterFontsForURL(action.url as CFURL, .process, &error)
-        return FontRegistrationOutcome(
-            url: action.url,
-            names: action.names,
-            enabled: false,
-            succeeded: true,
-            previewRegistered: previewRegistered,
-            errorDescription: previewRegistered
-                ? nil
-                : error?.takeRetainedValue().localizedDescription ?? action.url.lastPathComponent
-        )
+        return success(action)
+    }
+
+    private func success(_ action: FontRegistrationAction) -> FontRegistrationOutcome {
+        FontRegistrationOutcome(url: action.url, names: action.names, succeeded: true, errorDescription: nil)
     }
 
     private func failure(_ action: FontRegistrationAction, error: Unmanaged<CFError>?) -> FontRegistrationOutcome {
         FontRegistrationOutcome(
             url: action.url,
             names: action.names,
-            enabled: action.enabled,
             succeeded: false,
-            previewRegistered: false,
             errorDescription: error?.takeRetainedValue().localizedDescription ?? action.url.lastPathComponent
         )
     }

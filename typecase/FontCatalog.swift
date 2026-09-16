@@ -1,6 +1,5 @@
 import AppKit
 import Combine
-import CoreText
 
 /// The shared, app-lifetime font library.
 ///
@@ -36,7 +35,9 @@ final class FontCatalog: ObservableObject {
     private let registrationQueue = SerialWorkQueue()
 
     private var activeManagedNames: Set<String> = []
-    private var processRegisteredNames: Set<String> = []
+    /// Names the user deactivated since the last installed-font scan. The scan's
+    /// installed records may still list them, so they are masked when regrouping.
+    private var deactivatedManagedNames: Set<String> = []
     private var japaneseNameCache: [URL: [String: String]] = [:]
     private var fileCache: [URL: CachedFontFile] = [:]
     private var installedRecords: [FaceRecord] = []
@@ -129,10 +130,6 @@ final class FontCatalog: ObservableObject {
     func family(for selection: Set<FontFamily.ID>) -> FontFamily? {
         guard selection.count == 1, let id = selection.first else { return nil }
         return familyByID[id]
-    }
-
-    func families(in selection: Set<FontFamily.ID>) -> [FontFamily] {
-        families.filter { selection.contains($0.id) }
     }
 
     /// Returns the unfiltered family count represented by a sidebar destination.
@@ -304,6 +301,9 @@ final class FontCatalog: ObservableObject {
         fileCache = output.files
         folderRecords = output.folderRecords
         scannedRoots = roots
+        // The seeds of this scan are the baseline for the next one; without storing
+        // them the installed set looks changed on every refresh.
+        installedSeeds = seeds
         lastDirectoryFingerprint = output.directoryFingerprint
 
         if output.hasChanges || !hasLoadedOnce {
@@ -314,8 +314,8 @@ final class FontCatalog: ObservableObject {
             dataRevision += 1
             familiesRevision += 1
 
-            // Registering folder fonts can take a while for large libraries, so the list
-            // is published first. A user toggle interrupts the batch at the next file.
+            // Re-registering activated fonts can take a while for large libraries, so the
+            // list is published first. A user toggle interrupts the batch at the next file.
             let changedFiles = output.changedFiles
             let files = output.files
             Task { [weak self] in
@@ -339,9 +339,10 @@ final class FontCatalog: ObservableObject {
         folderMonitor.update(roots: folders)
     }
 
-    /// Registers fonts of added folders: activated files in the user scope and
-    /// deactivated files in the process scope so they can still be previewed.
-    /// Returns whether any Core Text registration call was made.
+    /// Re-registers changed fonts that are activated for the user. Deactivated
+    /// fonts are previewed directly from their files by `FontResolver`, so they
+    /// are never registered with Core Text. Returns whether any registration
+    /// call actually succeeded.
     @discardableResult
     private func synchronizeFolderRegistration(
         _ changedFiles: [URL],
@@ -351,19 +352,16 @@ final class FontCatalog: ObservableObject {
         var didRegister = false
         for url in changedFiles {
             if shouldAbort() { break }
-            guard let cached = files[url], !cached.descriptorNames.isEmpty else { continue }
-            let enabled = !cached.descriptorNames.isDisjoint(with: activeManagedNames)
+            guard let cached = files[url], !cached.descriptorNames.isEmpty,
+                  !cached.descriptorNames.isDisjoint(with: activeManagedNames) else { continue }
             let action = FontRegistrationAction(
                 url: url,
                 names: cached.descriptorNames,
-                enabled: enabled,
+                enabled: true,
                 skipIfAlreadyScoped: false
             )
             let outcomes = await registrar.synchronize([action])
-            didRegister = true
-            for outcome in outcomes where outcome.succeeded && !outcome.enabled {
-                processRegisteredNames.formUnion(outcome.names)
-            }
+            if outcomes.contains(where: \.succeeded) { didRegister = true }
         }
         return didRegister
     }
@@ -408,13 +406,11 @@ final class FontCatalog: ObservableObject {
         for outcome in outcomes {
             if outcome.succeeded {
                 if enabled {
-                    processRegisteredNames.subtract(outcome.names)
                     activeManagedNames.formUnion(outcome.names)
+                    deactivatedManagedNames.subtract(outcome.names)
                 } else {
                     activeManagedNames.subtract(outcome.names)
-                    if outcome.previewRegistered {
-                        processRegisteredNames.formUnion(outcome.names)
-                    }
+                    deactivatedManagedNames.formUnion(outcome.names)
                 }
             } else {
                 failures.append(outcome.errorDescription ?? outcome.url.lastPathComponent)
@@ -436,15 +432,15 @@ final class FontCatalog: ObservableObject {
         records.reserveCapacity(installedRecords.count + folderRecords.count)
 
         for record in installedRecords {
-            let name = record.face.postScriptName
-            let processOnly = processRegisteredNames.contains(name) && !activeManagedNames.contains(name)
-            let isInstalled = !processOnly
-            records.append(record.withInstalled(isInstalled))
-            if isInstalled { installedNames.insert(name) }
+            installedNames.insert(record.face.postScriptName)
+            records.append(record.withInstalled(true))
         }
         for record in folderRecords {
             let name = record.face.postScriptName
-            let isInstalled = installedNames.contains(name) || activeManagedNames.contains(name)
+            // The installed records may still list a font the user deactivated since
+            // the last scan, so recently deactivated names are masked until then.
+            let isInstalled = activeManagedNames.contains(name)
+                || (installedNames.contains(name) && !deactivatedManagedNames.contains(name))
             records.append(record.withInstalled(isInstalled))
         }
 

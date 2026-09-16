@@ -27,14 +27,6 @@ nonisolated final class FolderMonitor: @unchecked Sendable {
         }
     }
 
-    func stop() {
-        queue.async { [weak self] in
-            self?.pendingNotification?.cancel()
-            self?.pendingNotification = nil
-            self?.stopStream()
-        }
-    }
-
     fileprivate func eventReceived() {
         guard pendingNotification == nil else { return }
         let work = DispatchWorkItem { [weak self] in

@@ -246,3 +246,15 @@ Time ProfilerでCPU時間とメインスレッド占有、Hangsで停止、Swift
 - 登録変更通知による外部変更の即時反映（現状も手動更新またはフォルダ変更時に再照合）。
 - 多スタイルファミリーの List 行への仮想化（インスペクタのみ LazyVStack 化）。
 - Instruments による効果測定と、`xcodebuild test` による回帰テスト。
+
+### 追加の整理（2026-09-16）
+
+調査で見つかった未使用コード・二重経路・検出不備を整理した。Debug・Release の両構成でビルド成功を確認。実機での動作確認は未実施。
+
+- **プレビュー用 process 登録の削除:** 無効フォントは `FontResolver` がファイル descriptor から直接プレビューするため、走査後の process 登録と、無効化時・有効化失敗時のプレビュー用再登録を削除した。`FontRegistrar` は user スコープの有効化・解除のみを行う。解除直後は走査済み installed レコードがまだ残るため、`deactivatedManagedNames` で表示を補正する。
+- **差分判定の修正:** `installedSeeds` を走査後に保存していなかったため、インストール済みフォントが存在すると毎回 installed セットが変更扱いになり、メタデータ再解析とカタログ再構築が繰り返されていた。走査した seeds を次回の基準として保持する。
+- **バックストップの検出範囲:** ディレクトリ指紋に各ルート自身の更新日時を含めた。列挙はルートの内容しか返さず、ルート直下の追加・削除を検出できなかった。あわせて 1 エントリあたりの属性読み取りを 1 回にまとめた。
+- **Refresh の経路短縮:** File メニューから通知を配信し、各ウィンドウが `catalog.refresh()` を呼ぶ経路をやめ、共有カタログを直接更新する。
+- **未使用コードの削除:** `FontCatalog.families(in:)`、`LibraryViewState.sectionIsEmpty(catalog:)`、`LibrarySelection.title`、`FolderMonitor.stop()`、`PreviewTextEditor.isFieldFocused`、`FontPreviewText.color`。
+- **プレビュー入力欄の外観:** DESIGN.md の方針に合わせ、material・影・独自枠線をやめ、リスト下の通常領域に置いた。
+- **インスペクタの Styles 一覧を削除:** 一覧行のダブルクリック展開と内容が重複するため、右パネルのスタイル別プレビュー一覧を削除した。スタイル数は LabeledContent に残る。

@@ -155,14 +155,6 @@ enum LibrarySelection: Hashable {
     case systemScope(SystemFontScope)
     case folder(URL)
 
-    var title: String {
-        switch self {
-        case .section(let section): section.title
-        case .systemScope(let scope): scope.title
-        case .folder(let url): url.lastPathComponent
-        }
-    }
-
     var systemImage: String {
         switch self {
         case .section(let section): section.systemImage
