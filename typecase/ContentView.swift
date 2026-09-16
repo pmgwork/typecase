@@ -3,6 +3,7 @@ import SwiftUI
 
 struct ContentView: View {
     @EnvironmentObject private var catalog: FontCatalog
+    @EnvironmentObject private var settings: AppSettings
     @StateObject private var viewState = LibraryViewState()
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
     @State private var inspectorVisible = true
@@ -17,7 +18,6 @@ struct ContentView: View {
             FontLibraryView(catalog: catalog, viewState: viewState)
         }
         .navigationTitle("TypeCase")
-        .searchable(text: $viewState.searchText, placement: .toolbar, prompt: "Search")
         .inspector(isPresented: $inspectorVisible) {
             FontInspector(catalog: catalog, viewState: viewState, comparisonVisible: $comparisonVisible)
                 .inspectorColumnWidth(min: 260, ideal: 320, max: 400)
@@ -49,7 +49,7 @@ struct ContentView: View {
             // Keep the size control separate from the button groups so it reads
             // as its own control instead of merging into their background.
             ToolbarItem {
-                PreviewSizeControl(size: $viewState.previewSize)
+                PreviewSizeControl(size: $settings.previewSize)
             }
             .sharedBackgroundVisibility(.hidden)
 
@@ -69,6 +69,11 @@ struct ContentView: View {
                 }
                 .help("Show or hide the inspector")
             }
+
+            ToolbarItem {
+                ToolbarSearchField(text: $viewState.searchText)
+                    .frame(width: 220)
+            }
         }
         .sheet(isPresented: $comparisonVisible) {
             ComparisonView(viewState: viewState, families: viewState.selectedFamilies(catalog: catalog))
@@ -80,11 +85,18 @@ struct ContentView: View {
             catalog.addFolder { url in viewState.librarySelection = .folder(url) }
         }
         .task {
+            viewState.restoreStartupState(from: settings)
             viewState.reconcile(with: catalog)
         }
         .background(WindowAccessor { window = $0 })
         .onChange(of: catalog.familiesRevision) { _, _ in
             viewState.reconcile(with: catalog)
+        }
+        .onChange(of: viewState.librarySelection) { _, selection in
+            settings.remember(location: selection)
+        }
+        .onChange(of: viewState.selection) { _, selection in
+            settings.remember(selection: selection)
         }
         .alert("TypeCase", isPresented: Binding(
             get: { catalog.errorMessage != nil },
@@ -98,6 +110,44 @@ struct ContentView: View {
 
     private var compareTitle: String {
         viewState.selection.count > 1 ? "Compare \(viewState.selection.count)" : "Compare"
+    }
+}
+
+/// A compact native search field. SwiftUI's toolbar `.searchable` expands to
+/// consume all flexible space on macOS, which is too wide for this library.
+private struct ToolbarSearchField: NSViewRepresentable {
+    @Binding var text: String
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(text: $text)
+    }
+
+    func makeNSView(context: Context) -> NSSearchField {
+        let field = NSSearchField()
+        field.placeholderString = "Search"
+        field.delegate = context.coordinator
+        field.sendsSearchStringImmediately = true
+        return field
+    }
+
+    func updateNSView(_ field: NSSearchField, context: Context) {
+        context.coordinator.text = $text
+        if field.stringValue != text {
+            field.stringValue = text
+        }
+    }
+
+    final class Coordinator: NSObject, NSSearchFieldDelegate {
+        var text: Binding<String>
+
+        init(text: Binding<String>) {
+            self.text = text
+        }
+
+        func controlTextDidChange(_ notification: Notification) {
+            guard let field = notification.object as? NSSearchField else { return }
+            text.wrappedValue = field.stringValue
+        }
     }
 }
 
@@ -141,48 +191,28 @@ private struct PreviewSizeControl: View {
 private struct Sidebar: View {
     @ObservedObject var catalog: FontCatalog
     @ObservedObject var viewState: LibraryViewState
+    @EnvironmentObject private var settings: AppSettings
     @AppStorage("systemScopesExpanded") private var systemScopesExpanded = true
     @State private var isDropTargeted = false
+
+    /// The source sections the settings leave visible.
+    private var sourceSections: [LibrarySection] {
+        var sections: [LibrarySection] = []
+        if settings.showLocalSection { sections.append(.local) }
+        if settings.showAdobeSection { sections.append(.adobe) }
+        if settings.showMorisawaSection { sections.append(.morisawa) }
+        return sections
+    }
 
     var body: some View {
         List(selection: $viewState.librarySelection) {
             Section {
-                ForEach([LibrarySection.all, .favorites]) { section in
-                    let selection = LibrarySelection.section(section)
-                    SidebarLabel(title: section.title, systemImage: section.systemImage)
-                        .badge(selectedCount(for: selection))
-                        .tag(selection)
-                }
+                if settings.showAllSection { sectionRow(.all) }
+                if settings.showFavoritesSection { sectionRow(.favorites) }
+                if settings.showSystemSection { systemGroup }
 
-                DisclosureGroup(isExpanded: $systemScopesExpanded) {
-                    ForEach(SystemFontScope.allCases, id: \.self) { scope in
-                        // Indent with a spacer instead of leading padding: a padded row is
-                        // treated as a nested sidebar row and rendered with a smaller font.
-                        HStack(spacing: 0) {
-                            Color.clear.frame(width: 20, height: 1)
-                            SidebarLabel(title: scope.title, systemImage: scope.systemImage)
-                        }
-                        .badge(selectedCount(for: .systemScope(scope)))
-                        .tag(LibrarySelection.systemScope(scope))
-                    }
-                } label: {
-                    HStack(spacing: 6) {
-                        SidebarLabel(title: LibrarySection.system.title, systemImage: LibrarySection.system.systemImage)
-                        Spacer(minLength: 6)
-                        if viewState.librarySelection == .section(.system) {
-                            Text("\(catalog.fontCount(for: .section(.system)))")
-                                .monospacedDigit()
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                    .tag(LibrarySelection.section(.system))
-                }
-
-                ForEach([LibrarySection.local, .adobe, .morisawa]) { section in
-                    let selection = LibrarySelection.section(section)
-                    SidebarLabel(title: section.title, systemImage: section.systemImage)
-                        .badge(selectedCount(for: selection))
-                        .tag(selection)
+                ForEach(sourceSections) { section in
+                    sectionRow(section)
                 }
             }
 
@@ -214,11 +244,24 @@ private struct Sidebar: View {
                     }
                 }
             } header: {
-                Text("Folders")
-                    .foregroundStyle(Color(nsColor: .secondaryLabelColor))
+                HStack(spacing: 8) {
+                    Text("Folders")
+                        .foregroundStyle(Color(nsColor: .secondaryLabelColor))
+                    Spacer(minLength: 0)
+                    Button {
+                        catalog.addFolder { url in viewState.librarySelection = .folder(url) }
+                    } label: {
+                        Image(systemName: "folder.badge.plus")
+                    }
+                    .buttonStyle(.borderless)
+                    .controlSize(.small)
+                    .help("Add a font folder")
+                    .accessibilityLabel("Add a font folder")
+                }
+                .padding(.trailing, 12)
             }
 
-            if !catalog.allTags.isEmpty {
+            if settings.showTagsSection, !catalog.allTags.isEmpty {
                 Section {
                     ForEach(catalog.allTags, id: \.self) { tag in
                         Button {
@@ -246,6 +289,20 @@ private struct Sidebar: View {
                 viewState.librarySelection = .section(.system)
             }
         }
+        .onChange(of: settings.visibleSidebarSections) { _, sections in
+            // Hiding a destination moves the selection to the first row that is
+            // still visible.
+            guard !settings.isSidebarItemVisible(viewState.librarySelection),
+                  let fallback = sections.first else { return }
+            viewState.librarySelection = .section(fallback)
+        }
+        .onAppear {
+            // A restored system scope must be visible; a collapsed group has no
+            // row to select.
+            if !systemScopesExpanded, case .systemScope = viewState.librarySelection {
+                viewState.librarySelection = .section(.system)
+            }
+        }
         .dropDestination(for: URL.self) { urls, _ in
             guard let added = catalog.addFolders(urls) else { return false }
             viewState.librarySelection = .folder(added)
@@ -261,16 +318,39 @@ private struct Sidebar: View {
                     .allowsHitTesting(false)
             }
         }
-        // Sidebar-scoped toolbar item: appears in the sidebar’s own toolbar area.
-        .toolbar {
-            ToolbarItem(placement: .automatic) {
-                Button {
-                    catalog.addFolder { url in viewState.librarySelection = .folder(url) }
-                } label: {
-                    Label("Add Font Folder", systemImage: "plus")
+    }
+
+    private func sectionRow(_ section: LibrarySection) -> some View {
+        let selection = LibrarySelection.section(section)
+        return SidebarLabel(title: section.title, systemImage: section.systemImage)
+            .badge(selectedCount(for: selection))
+            .tag(selection)
+    }
+
+    /// The System Fonts disclosure group, including its installation scopes.
+    private var systemGroup: some View {
+        DisclosureGroup(isExpanded: $systemScopesExpanded) {
+            ForEach(SystemFontScope.allCases, id: \.self) { scope in
+                // Indent with a spacer instead of leading padding: a padded row is
+                // treated as a nested sidebar row and rendered with a smaller font.
+                HStack(spacing: 0) {
+                    Color.clear.frame(width: 20, height: 1)
+                    SidebarLabel(title: scope.title, systemImage: scope.systemImage)
                 }
-                .help("Add a font folder")
+                .badge(selectedCount(for: .systemScope(scope)))
+                .tag(LibrarySelection.systemScope(scope))
             }
+        } label: {
+            HStack(spacing: 6) {
+                SidebarLabel(title: LibrarySection.system.title, systemImage: LibrarySection.system.systemImage)
+                Spacer(minLength: 6)
+                if viewState.librarySelection == .section(.system) {
+                    Text("\(catalog.fontCount(for: .section(.system)))")
+                        .monospacedDigit()
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .tag(LibrarySelection.section(.system))
         }
     }
 
@@ -283,11 +363,12 @@ private struct Sidebar: View {
 private struct FontLibraryView: View {
     @ObservedObject var catalog: FontCatalog
     @ObservedObject var viewState: LibraryViewState
+    @EnvironmentObject private var settings: AppSettings
     @State private var expandedFamilyIDs: Set<FontFamily.ID> = []
 
     var body: some View {
         VStack(spacing: 0) {
-            let output = viewState.filter(catalog: catalog)
+            let output = viewState.filter(catalog: catalog, favoritesFirst: settings.favoritesFirst)
             if output.families.isEmpty {
                 emptyState(output: output)
             } else {
@@ -296,8 +377,8 @@ private struct FontLibraryView: View {
                         FontFamilyRow(
                             family: family,
                             isExpanded: expandedFamilyIDs.contains(family.id),
-                            previewText: viewState.previewText(for: family),
-                            previewSize: viewState.previewSize,
+                            previewText: settings.effectivePreviewText(for: family, entered: viewState.previewText),
+                            previewSize: settings.previewSize,
                             isFavorite: catalog.isFavorite(family),
                             toggleExpanded: { toggleExpanded(family) },
                             toggleFavorite: { catalog.toggleFavorite(family) },
@@ -590,6 +671,7 @@ private struct ActivationLock: View {
 private struct FontInspector: View {
     @ObservedObject var catalog: FontCatalog
     @ObservedObject var viewState: LibraryViewState
+    @EnvironmentObject private var settings: AppSettings
     @Binding var comparisonVisible: Bool
     @State private var newTag = ""
     @State private var missingCharacters: [String] = []
@@ -613,7 +695,7 @@ private struct FontInspector: View {
                     }
 
                     FontPreviewText(
-                        text: viewState.previewText(for: family),
+                        text: previewText(for: family),
                         postScriptName: family.previewFace?.postScriptName,
                         fileURL: family.previewFace?.fileURL,
                         size: 40,
@@ -651,7 +733,7 @@ private struct FontInspector: View {
                 .padding(20)
             }
             .task(id: missingCharactersKey(for: family)) {
-                let text = viewState.previewText(for: family)
+                let text = previewText(for: family)
                 // Clear while checking so the notice never describes the
                 // previously selected font.
                 missingCharacters = []
@@ -707,7 +789,11 @@ private struct FontInspector: View {
     }
 
     private func missingCharactersKey(for family: FontFamily) -> MissingCharactersKey {
-        MissingCharactersKey(familyID: family.id, text: viewState.previewText(for: family))
+        MissingCharactersKey(familyID: family.id, text: previewText(for: family))
+    }
+
+    private func previewText(for family: FontFamily) -> String {
+        settings.effectivePreviewText(for: family, entered: viewState.previewText)
     }
 
     /// Characters of the preview text the selected font cannot display. The
@@ -740,6 +826,7 @@ private struct MissingCharactersKey: Equatable {
 
 private struct ComparisonView: View {
     @ObservedObject var viewState: LibraryViewState
+    @EnvironmentObject private var settings: AppSettings
     @State private var families: [FontFamily]
     @Environment(\.dismiss) private var dismiss
 
@@ -761,9 +848,9 @@ private struct ComparisonView: View {
                 HStack(spacing: 10) {
                     TextField("Sample text", text: $viewState.previewText)
                         .textFieldStyle(.roundedBorder)
-                    Slider(value: $viewState.previewSize, in: 18...72, step: 1)
+                    Slider(value: $settings.previewSize, in: AppSettings.previewSizeRange, step: 1)
                         .frame(width: 120)
-                    Text("\(Int(viewState.previewSize)) pt")
+                    Text("\(Int(settings.previewSize)) pt")
                         .font(.callout)
                         .monospacedDigit()
                         .foregroundStyle(.secondary)
@@ -794,10 +881,10 @@ private struct ComparisonView: View {
                                 .help("Remove from comparison")
                             }
                             FontPreviewText(
-                                text: viewState.previewText(for: family),
+                                text: settings.effectivePreviewText(for: family, entered: viewState.previewText),
                                 postScriptName: family.previewFace?.postScriptName,
                                 fileURL: family.previewFace?.fileURL,
-                                size: viewState.previewSize,
+                                size: settings.previewSize,
                                 lines: 2
                             )
                         }
@@ -814,6 +901,7 @@ private struct ComparisonView: View {
 #Preview {
     ContentView()
         .environmentObject(FontCatalog())
+        .environmentObject(AppSettings())
 }
 
 /// Reports the hosting `NSWindow` so menu commands can be routed to the key window.

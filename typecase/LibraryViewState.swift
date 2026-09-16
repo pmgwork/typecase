@@ -20,7 +20,6 @@ final class LibraryViewState: ObservableObject {
     @Published var category: FontCategory?
     @Published var activationFilter: ActivationFilter = .all
     @Published var previewText = ""
-    @Published var previewSize: Double = 32
     @Published private(set) var coverageRevision = 0
 
     private var cachedOutput: (key: FilterKey, output: FilterOutput)?
@@ -38,6 +37,7 @@ final class LibraryViewState: ObservableObject {
         let librarySelection: LibrarySelection
         let category: FontCategory?
         let activationFilter: ActivationFilter
+        let favoritesFirst: Bool
         let catalogRevision: Int
         let coverageRevision: Int
     }
@@ -47,13 +47,14 @@ final class LibraryViewState: ObservableObject {
         let sectionIsEmpty: Bool
     }
 
-    func filter(catalog: FontCatalog) -> FilterOutput {
+    func filter(catalog: FontCatalog, favoritesFirst: Bool) -> FilterOutput {
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
         let key = FilterKey(
             query: query,
             librarySelection: librarySelection,
             category: category,
             activationFilter: activationFilter,
+            favoritesFirst: favoritesFirst,
             catalogRevision: catalog.dataRevision,
             coverageRevision: coverageRevision
         )
@@ -94,6 +95,17 @@ final class LibraryViewState: ObservableObject {
                 guard !family.isEnabled else { continue }
             }
             matches.append(family)
+        }
+
+        if favoritesFirst {
+            // The catalog order is by name; sorting on the favorite flag with a
+            // name tiebreaker keeps that order inside both groups.
+            matches.sort { lhs, rhs in
+                let lhsFavorite = catalog.favorites.contains(lhs.id)
+                let rhsFavorite = catalog.favorites.contains(rhs.id)
+                if lhsFavorite != rhsFavorite { return lhsFavorite }
+                return lhs.name.localizedStandardCompare(rhs.name) == .orderedAscending
+            }
         }
 
         let output = FilterOutput(families: matches, sectionIsEmpty: sectionMatches == 0)
@@ -166,9 +178,27 @@ final class LibraryViewState: ObservableObject {
     /// Keeps the selection valid after the catalog changes and selects the first
     /// font when nothing is selected, matching the behavior of a fresh library.
     func reconcile(with catalog: FontCatalog) {
+        // Before the first scan finishes there is nothing to reconcile against;
+        // a restored selection must survive until the families arrive.
+        guard !catalog.familyIDs.isEmpty else { return }
         selection.formIntersection(catalog.familyIDs)
         if selection.isEmpty, let first = catalog.families.first?.id {
             selection = [first]
+        }
+    }
+
+    /// Applies the startup preferences once, before the first reconcile.
+    func restoreStartupState(from settings: AppSettings) {
+        if !settings.lastSelection.isEmpty {
+            selection = Set(settings.lastSelection)
+        }
+        if let location = settings.lastLibrarySelection {
+            librarySelection = location
+        }
+        // A hidden destination has no sidebar row to select.
+        if !settings.isSidebarItemVisible(librarySelection),
+           let fallback = settings.visibleSidebarSections.first {
+            librarySelection = .section(fallback)
         }
     }
 
@@ -188,13 +218,5 @@ final class LibraryViewState: ObservableObject {
         case .folder(let folder):
             catalog.familyFolderAncestors[family.id]?.contains(folder.standardizedFileURL) ?? false
         }
-    }
-
-    func previewText(for family: FontFamily) -> String {
-        let customText = previewText.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !customText.isEmpty { return previewText }
-        return family.supportsJapanese
-            ? "美しい文字は、言葉の表情を豊かにする。"
-            : "Typography gives every word a distinct voice."
     }
 }

@@ -10,13 +10,18 @@ import SwiftUI
 @main
 struct typecaseApp: App {
     @StateObject private var catalog = FontCatalog()
+    @StateObject private var settings = AppSettings()
 
     var body: some Scene {
         WindowGroup {
             ContentView()
                 .environmentObject(catalog)
+                .environmentObject(settings)
                 .task { catalog.start() }
         }
+        // A background launch starts without a window. The Dock icon still
+        // reopens the library. The behavior is read when the app launches.
+        .defaultLaunchBehavior(settings.startHidden ? .suppressed : .presented)
         .defaultSize(width: 1280, height: 760)
         .windowResizability(.contentMinSize)
         .commands {
@@ -32,6 +37,11 @@ struct typecaseApp: App {
                 }
                 .keyboardShortcut("r", modifiers: .command)
             }
+        }
+
+        Settings {
+            SettingsView()
+                .environmentObject(settings)
         }
     }
 }
