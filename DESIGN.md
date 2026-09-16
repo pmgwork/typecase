@@ -7,7 +7,7 @@ TypeCase uses a quiet, native macOS library interface inspired by the informatio
 ## Color and surfaces
 
 - Native semantic macOS colors provide automatic light and dark appearances.
-- The system accent color is the only saturated color and communicates enabled or selected states.
+- System green communicates font activation in list rows; the system accent color is reserved for selection.
 - Adobe Fonts and Morisawa Fonts use neutral source labels and SF Symbols rather than brand colors.
 - Dividers and native list selection provide 1 px boundaries without shadows.
 - The inspector uses `controlBackgroundColor` as the only secondary surface.
@@ -33,7 +33,7 @@ TypeCase uses a quiet, native macOS library interface inspired by the informatio
 - Standard macOS controls only: `List`, `Picker`, `Slider`, `TextField`, `Toggle`, `LabeledContent`, `.searchable`, `.inspector`, sheets, and SF Symbols.
 - The initial library scan runs off the main thread; while it is loading, the font list area shows a standard `ProgressView` row instead of the empty state.
 - No custom badges or hand-drawn borders in list rows; the font source appears as a short secondary label (`Morisawa`, `Adobe`, `Local`) and is omitted for OS fonts.
-- Each row starts with an activation indicator: a radio button for fonts TypeCase can activate (`circle.inset.filled` enabled, `circle` disabled, `circle.lefthalf.filled` partial) and `lock.fill` for fonts managed by macOS, Adobe, or Morisawa. Both indicators use the same size and column width so font names align, and expanded style rows repeat the indicator at the leading edge.
+- Each row starts with an activation indicator: a radio button for fonts TypeCase can activate (`circle.fill` enabled, `circle` disabled, `circle.lefthalf.filled` partial) and `lock.fill` for fonts managed by macOS, Adobe, or Morisawa. Active indicators and the lock use system green; a disabled style keeps a secondary-gray outline. Both indicators use the same size and column width so font names align, and expanded style rows repeat the indicator as a per-style activation button. Styles that share one font file toggle together, because Core Text registers font files as a unit.
 - Activation is changed from the list row only; the inspector shows the management hint for sources TypeCase cannot change, not a toggle.
 - Filters and folder actions live in toolbar menus; the preview size sits in the toolbar as a compact “A”/slider/“A” pill in its own toolbar item with the system glass effect, separate from the button groups.
 - The toolbar search field uses the native `NSSearchField` at a fixed 220 pt width instead of expanding into all available toolbar space.
@@ -49,7 +49,7 @@ TypeCase uses a quiet, native macOS library interface inspired by the informatio
 - A sidebar font count appears only on the currently selected destination.
 - Selection uses AppKit's native drawing: the sidebar requests non-emphasized gray and the font list requests emphasized accent blue. Selection shape, spacing, keyboard behavior, and multiple selection remain system-provided.
 - Font previews in lists are single-line with tail truncation so row heights stay constant; the inspector and comparison allow two lines.
-- Expanded style rows list each face light-to-heavy by font weight, with the style name as the tiebreaker so styles order the same for installed and folder fonts.
+- Expanded style rows list each face light-to-heavy by font weight, with the style name as the tiebreaker so styles order the same for installed and folder fonts. Only one family is expanded at a time, and selecting another font collapses the expanded styles.
 - Disabled local fonts are previewed directly from their font-file descriptors without registering or activating them.
 - Library edits update only the affected family so the list does not rebuild or re-animate during state changes.
 - State changes use native macOS motion and accessibility behavior; no decorative animation is added.

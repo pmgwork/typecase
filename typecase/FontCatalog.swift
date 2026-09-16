@@ -381,12 +381,32 @@ final class FontCatalog: ObservableObject {
             errorMessage = "Only fonts from an added local folder can be changed here."
             return
         }
-        let managedFaces = family.faces.filter(\.isManaged)
-        let urls = Set(managedFaces.compactMap(\.fileURL))
+        setEnabled(enabled, faces: family.faces.filter(\.isManaged))
+    }
+
+    /// Toggles one style of a family. Core Text registers and unregisters whole
+    /// font files, so a face toggles together with every face that shares its
+    /// file — the members of a collection, for example.
+    func setEnabled(_ enabled: Bool, face: FontFace, in family: FontFamily) {
+        guard face.isManaged, let url = face.fileURL else {
+            errorMessage = "Only fonts from an added local folder can be changed here."
+            return
+        }
+        let fileFaces = family.faces.filter { $0.isManaged && $0.fileURL == url }
+        setEnabled(enabled, faces: fileFaces.isEmpty ? [face] : fileFaces)
+    }
+
+    private func setEnabled(_ enabled: Bool, faces: [FontFace]) {
+        let urls = Set(faces.compactMap(\.fileURL))
         guard !urls.isEmpty else { return }
-        let namesByURL = Dictionary(grouping: managedFaces.compactMap { face in
-            face.fileURL.map { ($0, face.postScriptName) }
-        }, by: \.0).mapValues { Set($0.map(\.1)) }
+        // The cached descriptor names cover every face of a file, which keeps the
+        // recorded activation state in step with the file-level registration. The
+        // family's faces are the fallback for a file the cache no longer holds.
+        let namesByURL = Dictionary(uniqueKeysWithValues: urls.map { url in
+            let names = fileCache[url]?.descriptorNames
+                ?? Set(faces.filter { $0.fileURL == url }.map(\.postScriptName))
+            return (url, names)
+        })
 
         userRegistrationRevision += 1
         Task { [weak self] in

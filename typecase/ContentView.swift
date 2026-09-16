@@ -370,7 +370,7 @@ private struct FontLibraryView: View {
     @ObservedObject var viewState: LibraryViewState
     @EnvironmentObject private var settings: AppSettings
     @FocusState private var listFocused: Bool
-    @State private var expandedFamilyIDs: Set<FontFamily.ID> = []
+    @State private var expandedFamilyID: FontFamily.ID?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -382,7 +382,7 @@ private struct FontLibraryView: View {
                     ForEach(output.families) { family in
                         FontFamilyRow(
                             family: family,
-                            isExpanded: expandedFamilyIDs.contains(family.id),
+                            isExpanded: expandedFamilyID == family.id,
                             previewText: settings.effectivePreviewText(for: family, entered: viewState.previewText),
                             previewSize: settings.previewSize,
                             isFavorite: catalog.isFavorite(family),
@@ -390,6 +390,9 @@ private struct FontLibraryView: View {
                             toggleFavorite: { catalog.toggleFavorite(family) },
                             toggleEnabled: {
                                 catalog.setEnabled(!family.isEnabled || family.isPartiallyEnabled, family: family)
+                            },
+                            toggleFaceEnabled: { face in
+                                catalog.setEnabled(!face.isInstalled, face: face, in: family)
                             }
                         )
                             .equatable()
@@ -400,6 +403,11 @@ private struct FontLibraryView: View {
                 .environment(\.controlActiveState, .key)
                 .focused($listFocused)
                 .simultaneousGesture(TapGesture().onEnded { listFocused = true })
+                .onChange(of: viewState.selection) { _, selection in
+                    // Styles stay expanded only for the selected font.
+                    guard let expanded = expandedFamilyID, selection != [expanded] else { return }
+                    expandedFamilyID = nil
+                }
                 // The preview-text editor stays pinned below the list.
                 .safeAreaInset(edge: .bottom, spacing: 0) {
                     PreviewTextEditor(viewState: viewState)
@@ -532,13 +540,14 @@ private struct FontLibraryView: View {
     }
 
     private func toggleExpanded(_ family: FontFamily) {
-        if expandedFamilyIDs.contains(family.id) {
-            expandedFamilyIDs.remove(family.id)
-        } else {
-            expandedFamilyIDs.insert(family.id)
-        }
+        expandedFamilyID = expandedFamilyID == family.id ? nil : family.id
     }
 }
+
+/// The tint of the list-row activation indicators. System green marks fonts
+/// that TypeCase manages, including the lock for sources it cannot change;
+/// an inactive style keeps a secondary-gray outline.
+private let activationTint = Color.green
 
 private struct FontFamilyRow: View, Equatable {
     let family: FontFamily
@@ -549,6 +558,7 @@ private struct FontFamilyRow: View, Equatable {
     let toggleExpanded: () -> Void
     let toggleFavorite: () -> Void
     let toggleEnabled: () -> Void
+    let toggleFaceEnabled: (FontFace) -> Void
 
     static func == (lhs: FontFamilyRow, rhs: FontFamilyRow) -> Bool {
         lhs.family == rhs.family
@@ -589,14 +599,19 @@ private struct FontFamilyRow: View, Equatable {
                     ForEach(family.faces) { face in
                         VStack(alignment: .leading, spacing: 4) {
                             HStack(spacing: 8) {
-                                if family.isManaged {
-                                    Image(systemName: face.isInstalled ? "circle.inset.filled" : "circle")
-                                        .font(.callout)
-                                        .foregroundStyle(face.isInstalled ? Color.accentColor : Color.secondary)
-                                        .help(face.isInstalled ? "Enabled" : "Disabled")
-                                        .frame(width: 16)
+                                if face.isManaged {
+                                    Button {
+                                        toggleFaceEnabled(face)
+                                    } label: {
+                                        Image(systemName: face.isInstalled ? "circle.fill" : "circle")
+                                            .font(.callout)
+                                            .foregroundStyle(face.isInstalled ? activationTint : Color.secondary)
+                                    }
+                                    .buttonStyle(.borderless)
+                                    .help(face.isInstalled ? "Deactivate" : "Activate")
+                                    .frame(width: 16)
                                 } else {
-                                    ActivationLock(hint: family.source.managementHint)
+                                    ActivationLock(hint: faceLockHint)
                                 }
                                 Text(face.styleName)
                                     .font(.callout)
@@ -651,16 +666,24 @@ private struct FontFamilyRow: View, Equatable {
 
     private var activationSymbol: String {
         if family.isPartiallyEnabled { return "circle.lefthalf.filled" }
-        return family.isEnabled ? "circle.inset.filled" : "circle"
+        return family.isEnabled ? "circle.fill" : "circle"
     }
 
     private var activationColor: Color {
-        family.isEnabled ? .accentColor : .secondary
+        family.isEnabled ? activationTint : .secondary
     }
 
     private var activationHelp: String {
         if family.isPartiallyEnabled { return "Some styles are disabled — click to enable all" }
         return family.isEnabled ? "Deactivate" : "Activate"
+    }
+
+    /// A face outside the added folder is installed on this Mac, even when the
+    /// family also has folder faces, so it stays locked.
+    private var faceLockHint: String {
+        family.source == .local && family.isManaged
+            ? FontSource.system.managementHint
+            : family.source.managementHint
     }
 }
 
@@ -739,7 +762,7 @@ private struct ActivationLock: View {
     var body: some View {
         Image(systemName: "lock.fill")
             .font(.callout)
-            .foregroundStyle(.tertiary)
+            .foregroundStyle(activationTint)
             .help(hint)
             .frame(width: 16)
     }
