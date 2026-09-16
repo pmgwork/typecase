@@ -31,10 +31,18 @@ TypeCase uses a quiet, native macOS library interface inspired by the informatio
 ## Components and motion
 
 - Standard macOS controls only: `List`, `Picker`, `Slider`, `TextField`, `Toggle`, `LabeledContent`, `.searchable`, `.inspector`, sheets, and SF Symbols.
+- The initial library scan runs off the main thread; while it is loading, the font list area shows a standard `ProgressView` row instead of the empty state.
 - No custom badges, floating overlays, or hand-drawn borders; the font source appears as a short secondary label (`Morisawa`, `Adobe`, `Local`) and is omitted for OS fonts.
 - Each row starts with an activation indicator: a radio button for fonts TypeCase can activate (`circle.inset.filled` enabled, `circle` disabled, `circle.lefthalf.filled` partial) and `lock.fill` for fonts managed by macOS, Adobe, or Morisawa.
-- Filters and folder actions live in toolbar menus; the preview bar keeps only a flexible text field, slider, and size label.
-- The sidebar contains navigation rows only, so no bordered buttons appear inside it; folders are added from the toolbar “+” menu or File menu.
+- Activation is changed from the list row only; the inspector shows the management hint for sources TypeCase cannot change, not a toggle.
+- Filters and folder actions live in toolbar menus; the preview size sits in the toolbar as a compact “A”/slider/“A” pill in its own toolbar item with the system glass effect, separate from the button groups.
+- A preview-text editor is always visible below the font list: a text field with quick preset chips and a “+” chip that keeps the current text as a user preset.
+- The System Fonts group collapses from a leading disclosure control aligned with folder disclosure arrows; the expanded state is remembered across launches.
+- The sidebar contains navigation rows only, so no bordered buttons appear inside it; folders are added from the sidebar’s own toolbar “+” item beside the sidebar toggle, or the File menu.
+- All sidebar navigation labels use the same system font size, including indented System Fonts scopes and nested folders.
+- A sidebar font count appears only on the currently selected destination.
+- The selected sidebar row uses a neutral gray highlight rather than an accent-color fill.
 - Font previews in lists are single-line with tail truncation so row heights stay constant; the inspector and comparison allow two lines.
+- Disabled local fonts are previewed directly from their font-file descriptors without registering or activating them.
 - Library edits update only the affected family so the list does not rebuild or re-animate during state changes.
 - State changes use native macOS motion and accessibility behavior; no decorative animation is added.

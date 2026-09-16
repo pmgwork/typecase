@@ -1,22 +1,25 @@
+import AppKit
 import SwiftUI
 
 struct ContentView: View {
-    @StateObject private var store = FontLibraryStore()
+    @EnvironmentObject private var catalog: FontCatalog
+    @StateObject private var viewState = LibraryViewState()
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
     @State private var inspectorVisible = true
     @State private var comparisonVisible = false
+    @State private var window: NSWindow?
 
     var body: some View {
         NavigationSplitView(columnVisibility: $columnVisibility) {
-            Sidebar(store: store)
+            Sidebar(catalog: catalog, viewState: viewState)
                 .navigationSplitViewColumnWidth(min: 180, ideal: 210, max: 260)
         } detail: {
-            FontLibraryView(store: store)
+            FontLibraryView(catalog: catalog, viewState: viewState)
         }
         .navigationTitle("TypeCase")
-        .searchable(text: $store.searchText, placement: .toolbar, prompt: "Font or foundry")
+        .searchable(text: $viewState.searchText, placement: .toolbar, prompt: "Font or foundry")
         .inspector(isPresented: $inspectorVisible) {
-            FontInspector(store: store, comparisonVisible: $comparisonVisible)
+            FontInspector(catalog: catalog, viewState: viewState, comparisonVisible: $comparisonVisible)
                 .inspectorColumnWidth(min: 260, ideal: 320, max: 400)
         }
         // Keep the window's minimum size independent of sidebar and inspector visibility.
@@ -24,24 +27,22 @@ struct ContentView: View {
         .frame(minWidth: 860, minHeight: 520)
         .toolbar {
             ToolbarItemGroup {
-                Menu {
-                    Button("Add Font Folder…") { store.addFolder() }
-                    Divider()
-                    Button("Refresh Font Library") { store.refresh() }
+                Button {
+                    catalog.refresh()
                 } label: {
-                    Label("Add", systemImage: "plus")
+                    Label("Refresh", systemImage: "arrow.clockwise")
                 }
-                .help("Add a font folder or refresh the library")
+                .help("Refresh the font library")
 
                 Menu {
-                    Picker("Category", selection: $store.category) {
+                    Picker("Category", selection: $viewState.category) {
                         Text("All Categories").tag(FontCategory?.none)
                         ForEach(FontCategory.allCases) { category in
                             Text(category.title).tag(Optional(category))
                         }
                     }
                     Divider()
-                    Picker("Status", selection: $store.activationFilter) {
+                    Picker("Status", selection: $viewState.activationFilter) {
                         ForEach(ActivationFilter.allCases) { filter in
                             Text(filter.title).tag(filter)
                         }
@@ -50,13 +51,22 @@ struct ContentView: View {
                     Label("Filter", systemImage: "line.3.horizontal.decrease.circle")
                 }
                 .help("Filter by category and status")
+            }
 
+            // Keep the size control separate from the button groups so it reads
+            // as its own control instead of merging into their background.
+            ToolbarItem {
+                PreviewSizeControl(size: $viewState.previewSize)
+            }
+            .sharedBackgroundVisibility(.hidden)
+
+            ToolbarItemGroup {
                 Button {
                     comparisonVisible = true
                 } label: {
                     Label(compareTitle, systemImage: "rectangle.split.2x1")
                 }
-                .disabled(store.selection.count < 2)
+                .disabled(viewState.selection.count < 2)
                 .help("Compare the selected fonts side by side")
 
                 Button {
@@ -68,96 +78,188 @@ struct ContentView: View {
             }
         }
         .sheet(isPresented: $comparisonVisible) {
-            ComparisonView(store: store, families: store.selectedFamilies)
+            ComparisonView(viewState: viewState, families: viewState.selectedFamilies(catalog: catalog))
         }
         .onReceive(NotificationCenter.default.publisher(for: .addFontFolder)) { _ in
-            store.addFolder()
+            // The File menu command is not tied to a window; only the key window navigates
+            // to the newly added folder.
+            guard window?.isKeyWindow == true else { return }
+            catalog.addFolder { url in viewState.librarySelection = .folder(url) }
         }
         .onReceive(NotificationCenter.default.publisher(for: .refreshFontLibrary)) { _ in
-            store.refresh()
+            catalog.refresh()
+        }
+        .task {
+            viewState.reconcile(with: catalog)
+        }
+        .background(WindowAccessor { window = $0 })
+        .onChange(of: catalog.familiesRevision) { _, _ in
+            viewState.reconcile(with: catalog)
         }
         .alert("TypeCase", isPresented: Binding(
-            get: { store.errorMessage != nil },
-            set: { if !$0 { store.errorMessage = nil } }
+            get: { catalog.errorMessage != nil },
+            set: { if !$0 { catalog.errorMessage = nil } }
         )) {
-            Button("OK") { store.errorMessage = nil }
+            Button("OK") { catalog.errorMessage = nil }
         } message: {
-            Text(store.errorMessage ?? "")
+            Text(catalog.errorMessage ?? "")
         }
     }
 
     private var compareTitle: String {
-        store.selection.count > 1 ? "Compare \(store.selection.count)" : "Compare"
+        viewState.selection.count > 1 ? "Compare \(viewState.selection.count)" : "Compare"
+    }
+}
+
+/// Compact preview-size control for the toolbar: small “A”, slider, large “A”.
+private struct PreviewSizeControl: View {
+    @Binding var size: Double
+
+    /// A continuous slider keeps the system from drawing step tick marks below
+    /// the track; the value still snaps to whole points.
+    private var roundedSize: Binding<Double> {
+        Binding(
+            get: { size },
+            set: { size = $0.rounded() }
+        )
+    }
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Text("A")
+                .font(.system(size: 9, weight: .medium))
+                .foregroundStyle(.secondary)
+
+            Slider(value: roundedSize, in: 18...72)
+                .controlSize(.small)
+                .labelsHidden()
+                .frame(width: 96)
+                .accessibilityLabel("Preview size")
+
+            Text("A")
+                .font(.system(size: 15, weight: .medium))
+                .foregroundStyle(.secondary)
+        }
+        .frame(height: 20)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .glassEffect(.regular, in: .capsule)
+        .help("Preview size: \(Int(size)) pt")
     }
 }
 
 private struct Sidebar: View {
-    @ObservedObject var store: FontLibraryStore
+    @ObservedObject var catalog: FontCatalog
+    @ObservedObject var viewState: LibraryViewState
+    @AppStorage("systemScopesExpanded") private var systemScopesExpanded = true
     @State private var isDropTargeted = false
 
     var body: some View {
-        List(selection: $store.librarySelection) {
+        List(selection: $viewState.librarySelection) {
             Section {
                 ForEach([LibrarySection.all, .favorites]) { section in
-                    Label(section.title, systemImage: section.systemImage)
-                        .badge(section == .all ? store.families.count : 0)
-                        .tag(LibrarySelection.section(section))
+                    let selection = LibrarySelection.section(section)
+                    SidebarLabel(title: section.title, systemImage: section.systemImage)
+                        .badge(selectedCount(for: selection))
+                        .tag(selection)
                 }
 
-                Label(LibrarySection.system.title, systemImage: LibrarySection.system.systemImage)
-                    .badge(systemFontCount)
-                    .tag(LibrarySelection.section(.system))
-
-                ForEach(SystemFontScope.allCases, id: \.self) { scope in
-                    Label(scope.title, systemImage: scope.systemImage)
-                        .padding(.leading, 20)
+                DisclosureGroup(isExpanded: $systemScopesExpanded) {
+                    ForEach(SystemFontScope.allCases, id: \.self) { scope in
+                        // Indent with a spacer instead of leading padding: a padded row is
+                        // treated as a nested sidebar row and rendered with a smaller font.
+                        HStack(spacing: 0) {
+                            Color.clear.frame(width: 20, height: 1)
+                            SidebarLabel(title: scope.title, systemImage: scope.systemImage)
+                        }
+                        .badge(selectedCount(for: .systemScope(scope)))
                         .tag(LibrarySelection.systemScope(scope))
+                    }
+                } label: {
+                    HStack(spacing: 6) {
+                        SidebarLabel(title: LibrarySection.system.title, systemImage: LibrarySection.system.systemImage)
+                        Spacer(minLength: 6)
+                        if viewState.librarySelection == .section(.system) {
+                            Text("\(catalog.fontCount(for: .section(.system)))")
+                                .monospacedDigit()
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .tag(LibrarySelection.section(.system))
                 }
 
                 ForEach([LibrarySection.local, .adobe, .morisawa]) { section in
-                    Label(section.title, systemImage: section.systemImage)
-                        .tag(LibrarySelection.section(section))
+                    let selection = LibrarySelection.section(section)
+                    SidebarLabel(title: section.title, systemImage: section.systemImage)
+                        .badge(selectedCount(for: selection))
+                        .tag(selection)
                 }
             }
 
-            Section("Folders") {
-                if store.folders.isEmpty {
-                    Label("Drop folders here", systemImage: "plus")
+            Section {
+                if catalog.folders.isEmpty {
+                    SidebarLabel(title: "Drop folders here", systemImage: "plus")
                         .foregroundStyle(.secondary)
                         .selectionDisabled()
                 } else {
-                    OutlineGroup(store.folderTrees, children: \.children) { node in
-                        Label(node.url.lastPathComponent, systemImage: "folder")
+                    OutlineGroup(catalog.folderTrees, children: \.children) { node in
+                        SidebarLabel(title: node.url.lastPathComponent, systemImage: "folder")
                             .lineLimit(1)
+                            .badge(selectedCount(for: .folder(node.url)))
                             .tag(LibrarySelection.folder(node.url))
                             .help(node.url.path)
                             .contextMenu {
-                                Button("Show in Finder") { store.revealFolder(node.url) }
-                                if store.folders.contains(where: { $0.standardizedFileURL == node.url.standardizedFileURL }) {
+                                Button("Show in Finder") { catalog.revealFolder(node.url) }
+                                if catalog.folders.contains(where: { $0.standardizedFileURL == node.url.standardizedFileURL }) {
                                     Divider()
-                                    Button("Remove", role: .destructive) { store.removeFolder(node.url) }
+                                    Button("Remove", role: .destructive) {
+                                        if case .folder(let selected) = viewState.librarySelection,
+                                           selected.isContained(in: node.url) {
+                                            viewState.librarySelection = .section(.local)
+                                        }
+                                        catalog.removeFolder(node.url)
+                                    }
                                 }
                             }
                     }
                 }
+            } header: {
+                Text("Folders")
+                    .foregroundStyle(Color(nsColor: .secondaryLabelColor))
             }
 
-            if !store.allTags.isEmpty {
-                Section("Tags") {
-                    ForEach(store.allTags, id: \.self) { tag in
+            if !catalog.allTags.isEmpty {
+                Section {
+                    ForEach(catalog.allTags, id: \.self) { tag in
                         Button {
-                            store.librarySelection = .section(.all)
-                            store.searchText = tag
+                            viewState.librarySelection = .section(.all)
+                            viewState.searchText = tag
                         } label: {
-                            Label(tag, systemImage: "tag")
+                            SidebarLabel(title: tag, systemImage: "tag")
+                                .foregroundStyle(.primary)
                         }
                     }
+                } header: {
+                    Text("Tags")
+                        .foregroundStyle(Color(nsColor: .secondaryLabelColor))
                 }
             }
         }
+        // Keep the native source-list interaction while using its neutral
+        // inactive selection appearance instead of an accent-color fill.
+        .environment(\.controlActiveState, .inactive)
         .listStyle(.sidebar)
+        .onChange(of: systemScopesExpanded) { _, expanded in
+            // Collapsing while a scope is visible moves the selection to the
+            // parent row so the list and the sidebar still agree.
+            if !expanded, case .systemScope = viewState.librarySelection {
+                viewState.librarySelection = .section(.system)
+            }
+        }
         .dropDestination(for: URL.self) { urls, _ in
-            store.addFolders(urls)
+            guard let added = catalog.addFolders(urls) else { return false }
+            viewState.librarySelection = .folder(added)
+            return true
         } isTargeted: { targeted in
             isDropTargeted = targeted
         }
@@ -169,66 +271,100 @@ private struct Sidebar: View {
                     .allowsHitTesting(false)
             }
         }
+        // Sidebar-scoped toolbar item: appears in the sidebar’s own toolbar area.
+        .toolbar {
+            ToolbarItem(placement: .automatic) {
+                Button {
+                    catalog.addFolder { url in viewState.librarySelection = .folder(url) }
+                } label: {
+                    Label("Add Font Folder", systemImage: "plus")
+                }
+                .help("Add a font folder")
+            }
+        }
     }
 
-    private var systemFontCount: Int {
-        store.families.filter { $0.source == .system }.count
+    private func selectedCount(for selection: LibrarySelection) -> Int {
+        guard viewState.librarySelection == selection else { return 0 }
+        return catalog.fontCount(for: selection)
     }
-
 }
 
 private struct FontLibraryView: View {
-    @ObservedObject var store: FontLibraryStore
+    @ObservedObject var catalog: FontCatalog
+    @ObservedObject var viewState: LibraryViewState
     @State private var expandedFamilyIDs: Set<FontFamily.ID> = []
 
     var body: some View {
         VStack(spacing: 0) {
-            if !store.families.isEmpty {
-                previewControls
-                Divider()
-            }
-            if store.filteredFamilies.isEmpty {
-                emptyState
+            let output = viewState.filter(catalog: catalog)
+            if output.families.isEmpty {
+                emptyState(output: output)
             } else {
-                List(selection: $store.selection) {
-                    ForEach(store.filteredFamilies) { family in
+                List(selection: $viewState.selection) {
+                    ForEach(output.families) { family in
                         FontFamilyRow(
-                            store: store,
                             family: family,
                             isExpanded: expandedFamilyIDs.contains(family.id),
-                            toggleExpanded: { toggleExpanded(family) }
+                            previewText: viewState.previewText(for: family),
+                            previewSize: viewState.previewSize,
+                            isFavorite: catalog.isFavorite(family),
+                            toggleExpanded: { toggleExpanded(family) },
+                            toggleFavorite: { catalog.toggleFavorite(family) },
+                            toggleEnabled: {
+                                catalog.setEnabled(!family.isEnabled || family.isPartiallyEnabled, family: family)
+                            }
                         )
+                            .equatable()
                             .tag(family.id)
                     }
                 }
                 .listStyle(.inset)
+                // The preview-text editor stays pinned below the list.
+                .safeAreaInset(edge: .bottom, spacing: 0) {
+                    PreviewTextEditor(viewState: viewState)
+                        .padding(.horizontal, 16)
+                        .padding(.bottom, 16)
+                }
             }
         }
         .navigationSplitViewColumnWidth(min: 320, ideal: 640)
     }
 
     @ViewBuilder
-    private var emptyState: some View {
+    private func emptyState(output: LibraryViewState.FilterOutput) -> some View {
         Group {
-            if store.families.isEmpty {
+            if catalog.families.isEmpty && catalog.isLoading {
+                VStack(spacing: 12) {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text("Loading fonts…")
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if catalog.families.isEmpty {
                 ContentUnavailableView {
                     Label("No fonts in the library", systemImage: "textformat")
                 } description: {
                     Text("Installed fonts are read automatically. Add a folder to include the font files stored on disk.")
                 } actions: {
-                    Button("Add Font Folder…") { store.addFolder() }
-                    Button("Refresh") { store.refresh() }
+                    Button("Add Font Folder…") {
+                        catalog.addFolder { url in viewState.librarySelection = .folder(url) }
+                    }
+                    Button("Refresh") { catalog.refresh() }
                 }
-            } else if store.sectionIsEmpty {
+            } else if output.sectionIsEmpty {
                 ContentUnavailableView {
-                    Label(emptySectionTitle, systemImage: store.librarySelection.systemImage)
+                    Label(emptySectionTitle, systemImage: viewState.librarySelection.systemImage)
                 } description: {
                     Text(emptySectionMessage)
                 } actions: {
-                    if store.librarySelection == .section(.local) {
-                        Button("Add Font Folder…") { store.addFolder() }
+                    if viewState.librarySelection == .section(.local) {
+                        Button("Add Font Folder…") {
+                            catalog.addFolder { url in viewState.librarySelection = .folder(url) }
+                        }
                     }
-                    Button("Show All Fonts") { store.librarySelection = .section(.all) }
+                    Button("Show All Fonts") { viewState.librarySelection = .section(.all) }
                 }
             } else {
                 ContentUnavailableView {
@@ -236,7 +372,7 @@ private struct FontLibraryView: View {
                 } description: {
                     Text(filterSummary.isEmpty ? "Change the search text or filters." : filterSummary)
                 } actions: {
-                    Button("Clear Filters") { store.clearFilters() }
+                    Button("Clear Filters") { viewState.clearFilters() }
                 }
             }
         }
@@ -245,15 +381,15 @@ private struct FontLibraryView: View {
 
     private var filterSummary: String {
         var parts: [String] = []
-        let query = store.searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let query = viewState.searchText.trimmingCharacters(in: .whitespacesAndNewlines)
         if !query.isEmpty { parts.append("Search: “\(query)”") }
-        if let category = store.category { parts.append("Category: \(category.title)") }
-        if store.activationFilter != .all { parts.append("Status: \(store.activationFilter.title)") }
+        if let category = viewState.category { parts.append("Category: \(category.title)") }
+        if viewState.activationFilter != .all { parts.append("Status: \(viewState.activationFilter.title)") }
         return parts.joined(separator: " · ")
     }
 
     private var emptySectionTitle: String {
-        switch store.librarySelection {
+        switch viewState.librarySelection {
         case .section(.favorites): "No favorites yet"
         case .section(.local): "No local fonts"
         case .section(.adobe): "No Adobe Fonts"
@@ -265,7 +401,7 @@ private struct FontLibraryView: View {
     }
 
     private var emptySectionMessage: String {
-        switch store.librarySelection {
+        switch viewState.librarySelection {
         case .section(.favorites): "Select a font and click the star to keep it here."
         case .section(.local): "Add a folder that contains font files to browse them without installing."
         case .section(.adobe): "Fonts activated in Adobe Creative Cloud appear here."
@@ -274,26 +410,6 @@ private struct FontLibraryView: View {
         case .systemScope: "No fonts were found in this installation scope."
         case .section(.all), .section(.system): "Change the search text or filters."
         }
-    }
-
-    private var previewControls: some View {
-        HStack(spacing: 12) {
-            TextField("Sample text", text: $store.previewText)
-                .textFieldStyle(.roundedBorder)
-                .help("Leave empty to use the built-in sample for each language")
-
-            Slider(value: $store.previewSize, in: 18...72, step: 1)
-                .frame(minWidth: 80, maxWidth: 160)
-                .help("Preview size")
-
-            Text("\(Int(store.previewSize)) pt")
-                .font(.callout)
-                .monospacedDigit()
-                .foregroundStyle(.secondary)
-                .frame(width: 46, alignment: .trailing)
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
     }
 
     private func toggleExpanded(_ family: FontFamily) {
@@ -305,11 +421,23 @@ private struct FontLibraryView: View {
     }
 }
 
-private struct FontFamilyRow: View {
-    @ObservedObject var store: FontLibraryStore
+private struct FontFamilyRow: View, Equatable {
     let family: FontFamily
     let isExpanded: Bool
+    let previewText: String
+    let previewSize: Double
+    let isFavorite: Bool
     let toggleExpanded: () -> Void
+    let toggleFavorite: () -> Void
+    let toggleEnabled: () -> Void
+
+    static func == (lhs: FontFamilyRow, rhs: FontFamilyRow) -> Bool {
+        lhs.family == rhs.family
+            && lhs.isExpanded == rhs.isExpanded
+            && lhs.previewText == rhs.previewText
+            && lhs.previewSize == rhs.previewSize
+            && lhs.isFavorite == rhs.isFavorite
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -322,11 +450,6 @@ private struct FontFamilyRow: View {
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
-                if family.faces.count > 1 {
-                    Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
-                }
                 if family.source != .system {
                     Text(family.source.shortTitle)
                         .font(.callout)
@@ -335,9 +458,9 @@ private struct FontFamilyRow: View {
                 }
                 Spacer(minLength: 8)
                 Button {
-                    store.toggleFavorite(family)
+                    toggleFavorite()
                 } label: {
-                    Image(systemName: store.isFavorite(family) ? "star.fill" : "star")
+                    Image(systemName: isFavorite ? "star.fill" : "star")
                 }
                 .buttonStyle(.borderless)
                 .help("Favorite")
@@ -358,18 +481,20 @@ private struct FontFamilyRow: View {
                                 }
                             }
                             FontPreviewText(
-                                text: store.previewText(for: family),
+                                text: previewText,
                                 postScriptName: face.postScriptName,
-                                size: store.previewSize
+                                fileURL: face.fileURL,
+                                size: previewSize
                             )
                         }
                     }
                 }
             } else {
                 FontPreviewText(
-                    text: store.previewText(for: family),
+                    text: previewText,
                     postScriptName: family.previewFace?.postScriptName,
-                    size: store.previewSize
+                    fileURL: family.previewFace?.fileURL,
+                    size: previewSize
                 )
             }
         }
@@ -385,7 +510,7 @@ private struct FontFamilyRow: View {
     private var activationIndicator: some View {
         if family.isManaged {
             Button {
-                store.setEnabled(!family.isEnabled || family.isPartiallyEnabled, family: family)
+                toggleEnabled()
             } label: {
                 Image(systemName: activationSymbol)
                     .font(.callout)
@@ -417,12 +542,13 @@ private struct FontFamilyRow: View {
 }
 
 private struct FontInspector: View {
-    @ObservedObject var store: FontLibraryStore
+    @ObservedObject var catalog: FontCatalog
+    @ObservedObject var viewState: LibraryViewState
     @Binding var comparisonVisible: Bool
     @State private var newTag = ""
 
     var body: some View {
-        if let family = store.selectedFamily {
+        if let family = catalog.family(for: viewState.selection) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
                     VStack(alignment: .leading, spacing: 4) {
@@ -440,8 +566,9 @@ private struct FontInspector: View {
                     }
 
                     FontPreviewText(
-                        text: store.previewText(for: family),
+                        text: viewState.previewText(for: family),
                         postScriptName: family.previewFace?.postScriptName,
+                        fileURL: family.previewFace?.fileURL,
                         size: 40,
                         lines: 2
                     )
@@ -460,7 +587,11 @@ private struct FontInspector: View {
                         }
                     }
 
-                    activationControl(for: family)
+                    if !family.isManaged {
+                        Label(family.source.managementHint, systemImage: "lock")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                    }
 
                     Divider()
 
@@ -472,9 +603,9 @@ private struct FontInspector: View {
                 }
                 .padding(20)
             }
-        } else if store.selection.count > 1 {
+        } else if viewState.selection.count > 1 {
             ContentUnavailableView {
-                Label("\(store.selection.count) fonts selected", systemImage: "rectangle.split.2x1")
+                Label("\(viewState.selection.count) fonts selected", systemImage: "rectangle.split.2x1")
             } description: {
                 Text("Compare them side by side, or select a single font to edit its details.")
             } actions: {
@@ -488,35 +619,20 @@ private struct FontInspector: View {
     private func classificationBinding(for family: FontFamily) -> Binding<FontCategory> {
         Binding(
             get: { family.category },
-            set: { store.setCategory($0, for: family) }
+            set: { catalog.setCategory($0, for: family) }
         )
-    }
-
-    @ViewBuilder
-    private func activationControl(for family: FontFamily) -> some View {
-        if family.isManaged {
-            Toggle("Enabled", isOn: Binding(
-                get: { family.isEnabled },
-                set: { store.setEnabled($0, family: family) }
-            ))
-            .toggleStyle(.switch)
-        } else {
-            Label(managementMessage(for: family), systemImage: "lock")
-                .font(.callout)
-                .foregroundStyle(.secondary)
-        }
     }
 
     private func tagsSection(for family: FontFamily) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Tags")
                 .font(.headline)
-            ForEach(store.tags(for: family), id: \.self) { tag in
+            ForEach(catalog.tags(for: family), id: \.self) { tag in
                 HStack {
                     Label(tag, systemImage: "tag")
                     Spacer()
                     Button {
-                        store.removeTag(tag, from: family)
+                        catalog.removeTag(tag, from: family)
                     } label: {
                         Image(systemName: "minus.circle")
                     }
@@ -528,7 +644,7 @@ private struct FontInspector: View {
             TextField("Add tag", text: $newTag)
                 .textFieldStyle(.roundedBorder)
                 .onSubmit {
-                    store.addTag(newTag, to: family)
+                    catalog.addTag(newTag, to: family)
                     newTag = ""
                 }
         }
@@ -538,42 +654,41 @@ private struct FontInspector: View {
         VStack(alignment: .leading, spacing: 16) {
             Text("Styles")
                 .font(.headline)
-            ForEach(family.faces) { face in
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack {
-                        Text(face.styleName)
-                            .font(.callout)
-                            .foregroundStyle(.secondary)
-                        Spacer()
-                        if family.isManaged {
-                            Image(systemName: face.isInstalled ? "circle.inset.filled" : "circle")
+            LazyVStack(alignment: .leading, spacing: 16) {
+                ForEach(family.faces) { face in
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack {
+                            Text(face.styleName)
                                 .font(.callout)
-                                .foregroundStyle(face.isInstalled ? Color.accentColor : Color.secondary)
-                                .help(face.isInstalled ? "Enabled" : "Disabled")
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                            if family.isManaged {
+                                Image(systemName: face.isInstalled ? "circle.inset.filled" : "circle")
+                                    .font(.callout)
+                                    .foregroundStyle(face.isInstalled ? Color.accentColor : Color.secondary)
+                                    .help(face.isInstalled ? "Enabled" : "Disabled")
+                            }
                         }
+                        FontPreviewText(
+                            text: viewState.previewText(for: family),
+                            postScriptName: face.postScriptName,
+                            fileURL: face.fileURL,
+                            size: 21
+                        )
                     }
-                    FontPreviewText(
-                        text: store.previewText(for: family),
-                        postScriptName: face.postScriptName,
-                        size: 21
-                    )
                 }
             }
         }
     }
-
-    private func managementMessage(for family: FontFamily) -> String {
-        family.source.managementHint
-    }
 }
 
 private struct ComparisonView: View {
-    @ObservedObject var store: FontLibraryStore
+    @ObservedObject var viewState: LibraryViewState
     @State private var families: [FontFamily]
     @Environment(\.dismiss) private var dismiss
 
-    init(store: FontLibraryStore, families: [FontFamily]) {
-        self.store = store
+    init(viewState: LibraryViewState, families: [FontFamily]) {
+        self.viewState = viewState
         _families = State(initialValue: families)
     }
 
@@ -588,11 +703,11 @@ private struct ComparisonView: View {
                         .keyboardShortcut(.defaultAction)
                 }
                 HStack(spacing: 10) {
-                    TextField("Sample text", text: $store.previewText)
+                    TextField("Sample text", text: $viewState.previewText)
                         .textFieldStyle(.roundedBorder)
-                    Slider(value: $store.previewSize, in: 18...72, step: 1)
+                    Slider(value: $viewState.previewSize, in: 18...72, step: 1)
                         .frame(width: 120)
-                    Text("\(Int(store.previewSize)) pt")
+                    Text("\(Int(viewState.previewSize)) pt")
                         .font(.callout)
                         .monospacedDigit()
                         .foregroundStyle(.secondary)
@@ -623,9 +738,10 @@ private struct ComparisonView: View {
                                 .help("Remove from comparison")
                             }
                             FontPreviewText(
-                                text: store.previewText(for: family),
+                                text: viewState.previewText(for: family),
                                 postScriptName: family.previewFace?.postScriptName,
-                                size: store.previewSize,
+                                fileURL: family.previewFace?.fileURL,
+                                size: viewState.previewSize,
                                 lines: 2
                             )
                         }
@@ -641,4 +757,196 @@ private struct ComparisonView: View {
 
 #Preview {
     ContentView()
+        .environmentObject(FontCatalog())
+}
+
+/// Reports the hosting `NSWindow` so menu commands can be routed to the key window.
+private struct WindowAccessor: NSViewRepresentable {
+    let onWindow: (NSWindow?) -> Void
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView()
+        DispatchQueue.main.async { onWindow(view.window) }
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        DispatchQueue.main.async { onWindow(nsView.window) }
+    }
+}
+
+/// Sidebar rows keep their icons neutral; the accent color stays reserved for
+/// selection and activation states.
+private struct SidebarLabel: View {
+    let title: String
+    let systemImage: String
+
+    var body: some View {
+        Label {
+            Text(title)
+                .foregroundStyle(Color(nsColor: .labelColor))
+        } icon: {
+            Image(systemName: systemImage)
+                .foregroundStyle(Color(nsColor: .secondaryLabelColor))
+        }
+        // Sidebar and OutlineGroup can otherwise reduce nested rows to the
+        // smaller hierarchical style. Pin every navigation label to the same
+        // AppKit system size while preserving indentation.
+        .font(.system(size: NSFont.systemFontSize))
+    }
+}
+
+/// Persistent preview-text editor with quick presets, pinned below the font
+/// list: one text field above a row of sample chips.
+private struct PreviewTextEditor: View {
+    @ObservedObject var viewState: LibraryViewState
+    @FocusState private var isFieldFocused: Bool
+    @State private var customPresets = UserDefaults.standard.stringArray(forKey: PreviewTextEditor.presetsKey) ?? []
+
+    private static let presetsKey = "previewTextPresets"
+
+    private static let builtInPresets: [(title: String, text: String)] = [
+        ("123", "0123456789"),
+        ("ABC", "ABCDEFGHIJKLMNOPQRSTUVWXYZ"),
+        ("abc", "abcdefghijklmnopqrstuvwxyz"),
+        ("lorem", "Lorem ipsum dolor sit amet, consectetur adipiscing elit."),
+        ("fox", "The quick brown fox jumps over the lazy dog."),
+        ("deutsch", "Zwölf Boxkämpfer jagen Eva quer über den großen Sylter Deich."),
+        ("français", "Portez ce vieux whisky au juge blond qui fume."),
+        ("日本語", "美しい文字は、言葉の表情を豊かにする。"),
+        ("symbols", "→ ← ↑ ↓ ★ ☆ ♠ ♥ ♦ ♣ € £ ¥ © ® ™"),
+    ]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            TextField("Enter preview text…", text: $viewState.previewText)
+                .textFieldStyle(.roundedBorder)
+                .focused($isFieldFocused)
+
+            FlowLayout(spacing: 8) {
+                ForEach(Self.builtInPresets, id: \.title) { preset in
+                    presetChip(preset.title) {
+                        viewState.previewText = preset.text
+                    }
+                }
+
+                ForEach(customPresets, id: \.self) { preset in
+                    presetChip(preset) {
+                        viewState.previewText = preset
+                    }
+                    .contextMenu {
+                        Button("Remove Preset", role: .destructive) {
+                            removePreset(preset)
+                        }
+                    }
+                }
+
+                Button {
+                    addCurrentAsPreset()
+                } label: {
+                    chipLabel {
+                        Image(systemName: "plus")
+                    }
+                }
+                .buttonStyle(.plain)
+                .disabled(trimmedPreviewText.isEmpty)
+                .help("Add the current text as a preset")
+                .accessibilityLabel("Add the current text as a preset")
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: 720)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+        }
+        .shadow(color: .black.opacity(0.25), radius: 14, y: 6)
+    }
+
+    private var trimmedPreviewText: String {
+        viewState.previewText.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func presetChip(_ title: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            chipLabel {
+                Text(title).lineLimit(1)
+            }
+        }
+        .buttonStyle(.plain)
+        .help(title)
+    }
+
+    private func chipLabel<Content: View>(@ViewBuilder content: () -> Content) -> some View {
+        content()
+            .padding(.horizontal, 10)
+            .padding(.vertical, 4)
+            .background(
+                Color.primary.opacity(0.08),
+                in: RoundedRectangle(cornerRadius: 6, style: .continuous)
+            )
+            .contentShape(.rect)
+    }
+
+    private func addCurrentAsPreset() {
+        let text = trimmedPreviewText
+        guard !text.isEmpty, !customPresets.contains(text) else { return }
+        customPresets.append(text)
+        UserDefaults.standard.set(customPresets, forKey: Self.presetsKey)
+    }
+
+    private func removePreset(_ preset: String) {
+        customPresets.removeAll { $0 == preset }
+        UserDefaults.standard.set(customPresets, forKey: Self.presetsKey)
+    }
+}
+
+/// Wraps chips onto as many lines as needed.
+private struct FlowLayout: Layout {
+    var spacing: CGFloat = 8
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let maxWidth = proposal.width ?? .infinity
+        var lines: [[CGSize]] = []
+        var line: [CGSize] = []
+        var lineWidth: CGFloat = 0
+        for subview in subviews {
+            let size = subview.sizeThatFits(.unspecified)
+            let candidate = line.isEmpty ? size.width : lineWidth + spacing + size.width
+            if !line.isEmpty, candidate > maxWidth {
+                lines.append(line)
+                line = [size]
+                lineWidth = size.width
+            } else {
+                line.append(size)
+                lineWidth = candidate
+            }
+        }
+        if !line.isEmpty { lines.append(line) }
+
+        let height = lines.reduce(0) { $0 + ($1.map(\.height).max() ?? 0) }
+            + spacing * CGFloat(max(lines.count - 1, 0))
+        let width = lines.map { line in
+            line.reduce(0) { $0 + $1.width } + spacing * CGFloat(max(line.count - 1, 0))
+        }.max() ?? 0
+        return CGSize(width: min(width, maxWidth), height: height)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        var x = bounds.minX
+        var y = bounds.minY
+        var lineHeight: CGFloat = 0
+        for subview in subviews {
+            let size = subview.sizeThatFits(.unspecified)
+            if x > bounds.minX, x + size.width > bounds.maxX {
+                x = bounds.minX
+                y += lineHeight + spacing
+                lineHeight = 0
+            }
+            subview.place(at: CGPoint(x: x, y: y), anchor: .topLeading, proposal: ProposedViewSize(size))
+            x += size.width + spacing
+            lineHeight = max(lineHeight, size.height)
+        }
+    }
 }

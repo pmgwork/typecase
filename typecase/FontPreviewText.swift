@@ -4,6 +4,7 @@ import SwiftUI
 struct FontPreviewText: View {
     let text: String
     let postScriptName: String?
+    let fileURL: URL?
     let size: CGFloat
     var lines = 1
     var color: Color = .primary
@@ -19,9 +20,10 @@ struct FontPreviewText: View {
     }
 
     private var previewFont: Font {
-        guard let postScriptName, NSFont(name: postScriptName, size: size) != nil else {
-            return .system(size: size)
-        }
-        return .custom(postScriptName, size: size)
+        FontResolver.shared.previewFont(
+            postScriptName: postScriptName,
+            fileURL: fileURL,
+            size: size
+        )
     }
 }

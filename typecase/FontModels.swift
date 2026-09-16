@@ -1,6 +1,6 @@
 import Foundation
 
-enum FontSource: String, Codable, CaseIterable, Identifiable {
+nonisolated enum FontSource: String, Codable, CaseIterable, Identifiable, Sendable {
     case system
     case local
     case adobe
@@ -36,7 +36,7 @@ enum FontSource: String, Codable, CaseIterable, Identifiable {
     }
 }
 
-enum FontCategory: String, Codable, CaseIterable, Identifiable {
+nonisolated enum FontCategory: String, Codable, CaseIterable, Identifiable, Sendable {
     case sansSerif
     case serif
     case monospaced
@@ -56,7 +56,7 @@ enum FontCategory: String, Codable, CaseIterable, Identifiable {
     }
 }
 
-struct FontFace: Identifiable, Hashable {
+nonisolated struct FontFace: Identifiable, Hashable, Sendable {
     let postScriptName: String
     let styleName: String
     let weight: Int
@@ -67,7 +67,7 @@ struct FontFace: Identifiable, Hashable {
     var id: String { postScriptName }
 }
 
-struct FontFamily: Identifiable, Hashable {
+nonisolated struct FontFamily: Identifiable, Hashable, Sendable {
     let id: String
     let name: String
     let localizedName: String
@@ -88,7 +88,7 @@ struct FontFamily: Identifiable, Hashable {
     }
 }
 
-struct FontFolderNode: Identifiable, Hashable {
+nonisolated struct FontFolderNode: Identifiable, Hashable, Sendable {
     let url: URL
     let children: [FontFolderNode]?
 
@@ -179,4 +179,13 @@ enum ActivationFilter: String, CaseIterable, Identifiable {
 
     var id: String { rawValue }
     var title: String { rawValue.capitalized }
+}
+
+nonisolated extension URL {
+    func isContained(in directory: URL) -> Bool {
+        let fileComponents = standardizedFileURL.resolvingSymlinksInPath().pathComponents
+        let directoryComponents = directory.standardizedFileURL.resolvingSymlinksInPath().pathComponents
+        guard fileComponents.count >= directoryComponents.count else { return false }
+        return zip(fileComponents, directoryComponents).allSatisfy(==)
+    }
 }

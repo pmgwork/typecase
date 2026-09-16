@@ -5,7 +5,7 @@ import Foundation
 /// Core Text localizes family names using the user's global language order, so an English-first
 /// language list always yields English names. Reading the table lets TypeCase show the Japanese
 /// name for Japanese fonts regardless of the system language.
-enum FontNameTable {
+nonisolated enum FontNameTable {
     struct FamilyNames {
         var family: String?
         var typographicFamily: String?

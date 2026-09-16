@@ -9,9 +9,13 @@ import SwiftUI
 
 @main
 struct typecaseApp: App {
+    @StateObject private var catalog = FontCatalog()
+
     var body: some Scene {
         WindowGroup {
             ContentView()
+                .environmentObject(catalog)
+                .task { catalog.start() }
         }
         .defaultSize(width: 1280, height: 760)
         .windowResizability(.contentMinSize)
