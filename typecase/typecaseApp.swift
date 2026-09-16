@@ -19,9 +19,6 @@ struct typecaseApp: App {
                 .environmentObject(settings)
                 .task { catalog.start() }
         }
-        // A background launch starts without a window. The Dock icon still
-        // reopens the library. The behavior is read when the app launches.
-        .defaultLaunchBehavior(settings.startHidden ? .suppressed : .presented)
         .defaultSize(width: 1280, height: 760)
         .windowResizability(.contentMinSize)
         .commands {

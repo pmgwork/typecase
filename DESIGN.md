@@ -40,14 +40,14 @@ TypeCase uses a quiet, native macOS library interface inspired by the informatio
 - A floating preview-text editor is always visible below the font list: a Liquid Glass panel over a bottom gradient that fades list content beneath it, containing a text field, quick preset chips, and a “+” chip that keeps the current text as a user preset.
 - The preview text always filters the library: while it is not empty, the list keeps only fonts whose preview style can display every character of it. Coverage checks run off the main thread and are cached per font file.
 - The inspector lists the preview-text characters the selected font cannot display; list rows stay unmarked.
-- `Settings` (⌘,) has General, Sidebar, and Preview tabs with app-wide preferences shared by every window. General covers starting at login, launching in the background, and favorites-first sorting. The last section and selected font are always restored. Sidebar contains an aligned checkbox-and-icon list of All Fonts, Favorites, System Fonts, Local Library, Adobe Fonts, Morisawa Fonts, and Tags. Hiding a destination moves the selection to the first item that is still visible.
-- The login item mirrors the system state through `SMAppService`; when macOS asks the user to approve it, the row shows a hint and a shortcut to Login Items instead of a stale toggle. A background launch opens no window, and the Dock icon reopens the library.
+- `Settings` (⌘,) has General, Sidebar, and Preview tabs with app-wide preferences shared by every window. General covers starting at login and favorites-first sorting. The last section and selected font are always restored. Sidebar contains an aligned checkbox-and-icon list of All Fonts, Favorites, System Fonts, Local Library, Adobe Fonts, Morisawa Fonts, and Tags. Hiding a destination moves the selection to the first item that is still visible.
+- The login item mirrors the system state through `SMAppService`; when macOS asks the user to approve it, the row shows a hint and a shortcut to Login Items instead of a stale toggle.
 - The Preview settings choose the app-wide preview size and the Japanese and Latin sample texts used while the preview field is empty.
 - The System Fonts group collapses from a leading disclosure control aligned with folder disclosure arrows; the expanded state is remembered across launches.
 - The sidebar contains navigation rows only; the Folders section header has a trailing borderless `folder.badge.plus` button, and the same action remains available from the File menu.
 - All sidebar navigation labels use the same system font size, including indented System Fonts scopes and nested folders.
 - A sidebar font count appears only on the currently selected destination.
-- The selected sidebar row uses a neutral gray highlight rather than an accent-color fill.
+- Selection uses AppKit's native drawing: the sidebar requests non-emphasized gray and the font list requests emphasized accent blue. Selection shape, spacing, keyboard behavior, and multiple selection remain system-provided.
 - Font previews in lists are single-line with tail truncation so row heights stay constant; the inspector and comparison allow two lines.
 - Expanded style rows list each face light-to-heavy by font weight, with the style name as the tiebreaker so styles order the same for installed and folder fonts.
 - Disabled local fonts are previewed directly from their font-file descriptors without registering or activating them.

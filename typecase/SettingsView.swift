@@ -42,7 +42,6 @@ private struct GeneralSettingsView: View {
                         .foregroundStyle(.secondary)
                 }
 
-                Toggle("Start in the background", isOn: $settings.startHidden)
             }
 
             Section("Sorting") {

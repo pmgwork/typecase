@@ -225,6 +225,7 @@ private struct Sidebar: View {
                     OutlineGroup(catalog.folderTrees, children: \.children) { node in
                         SidebarLabel(title: node.url.lastPathComponent, systemImage: "folder")
                             .lineLimit(1)
+                            .background(TableRowEmphasisConfigurator())
                             .badge(selectedCount(for: .folder(node.url)))
                             .tag(LibrarySelection.folder(node.url))
                             .help(node.url.path)
@@ -323,6 +324,7 @@ private struct Sidebar: View {
     private func sectionRow(_ section: LibrarySection) -> some View {
         let selection = LibrarySelection.section(section)
         return SidebarLabel(title: section.title, systemImage: section.systemImage)
+            .background(TableRowEmphasisConfigurator())
             .badge(selectedCount(for: selection))
             .tag(selection)
     }
@@ -337,6 +339,7 @@ private struct Sidebar: View {
                     Color.clear.frame(width: 20, height: 1)
                     SidebarLabel(title: scope.title, systemImage: scope.systemImage)
                 }
+                .background(TableRowEmphasisConfigurator())
                 .badge(selectedCount(for: .systemScope(scope)))
                 .tag(LibrarySelection.systemScope(scope))
             }
@@ -350,9 +353,11 @@ private struct Sidebar: View {
                         .foregroundStyle(.secondary)
                 }
             }
+            .background(TableRowEmphasisConfigurator())
             .tag(LibrarySelection.section(.system))
         }
     }
+
 
     private func selectedCount(for selection: LibrarySelection) -> Int {
         guard viewState.librarySelection == selection else { return 0 }
@@ -364,6 +369,7 @@ private struct FontLibraryView: View {
     @ObservedObject var catalog: FontCatalog
     @ObservedObject var viewState: LibraryViewState
     @EnvironmentObject private var settings: AppSettings
+    @FocusState private var listFocused: Bool
     @State private var expandedFamilyIDs: Set<FontFamily.ID> = []
 
     var body: some View {
@@ -391,6 +397,9 @@ private struct FontLibraryView: View {
                     }
                 }
                 .listStyle(.inset)
+                .environment(\.controlActiveState, .key)
+                .focused($listFocused)
+                .simultaneousGesture(TapGesture().onEnded { listFocused = true })
                 // The preview-text editor stays pinned below the list.
                 .safeAreaInset(edge: .bottom, spacing: 0) {
                     PreviewTextEditor(viewState: viewState)
@@ -422,6 +431,7 @@ private struct FontLibraryView: View {
         }
         .navigationSplitViewColumnWidth(min: 320, ideal: 640)
     }
+
 
     @ViewBuilder
     private func emptyState(output: LibraryViewState.FilterOutput) -> some View {
@@ -611,6 +621,7 @@ private struct FontFamilyRow: View, Equatable {
             }
         }
         .padding(.vertical, 6)
+        .background(TableRowEmphasisConfigurator(isEmphasized: true))
         .contentShape(.rect)
         // Let the List select on the first click without waiting for the
         // double-click recognizer to fail.
@@ -650,6 +661,72 @@ private struct FontFamilyRow: View, Equatable {
     private var activationHelp: String {
         if family.isPartiallyEnabled { return "Some styles are disabled — click to enable all" }
         return family.isEnabled ? "Deactivate" : "Activate"
+    }
+}
+
+/// Uses AppKit's native selection paint: gray in the sidebar, emphasized in
+/// the font list. No custom backgrounds or selection geometry are drawn.
+private struct TableRowEmphasisConfigurator: NSViewRepresentable {
+    var isEmphasized = false
+
+    func makeNSView(context: Context) -> Probe {
+        let view = Probe()
+        view.isEmphasized = isEmphasized
+        return view
+    }
+
+    func updateNSView(_ view: Probe, context: Context) {
+        view.isEmphasized = isEmphasized
+        view.attach()
+    }
+
+    static func dismantleNSView(_ view: Probe, coordinator: ()) {
+        view.observation = nil
+    }
+
+    final class Probe: NSView {
+        var isEmphasized = false
+        weak var observedRow: NSTableRowView?
+        var observation: NSKeyValueObservation?
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            attach()
+        }
+
+        override func viewDidMoveToSuperview() {
+            super.viewDidMoveToSuperview()
+            attach()
+        }
+
+        func attach() {
+            var ancestor = superview
+            while let current = ancestor {
+                if let row = current as? NSTableRowView {
+                    guard observedRow !== row else {
+                        row.isEmphasized = isEmphasized
+                        return
+                    }
+                    observation = nil
+                    observedRow = row
+                    // Observe the actual property rather than only selection
+                    // notifications: AppKit also updates it on focus changes.
+                    observation = row.observe(\.isEmphasized, options: [.new]) { [weak self] row, _ in
+                        MainActor.assumeIsolated {
+                            guard let self else { return }
+                            if row.isEmphasized != self.isEmphasized {
+                                row.isEmphasized = self.isEmphasized
+                            }
+                        }
+                    }
+                    row.isEmphasized = isEmphasized
+                    return
+                }
+                ancestor = current.superview
+            }
+            observation = nil
+            observedRow = nil
+        }
     }
 }
 

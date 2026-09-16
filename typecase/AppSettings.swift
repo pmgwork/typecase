@@ -21,9 +21,6 @@ final class AppSettings: ObservableObject {
     @Published var favoritesFirst: Bool {
         didSet { defaults.set(favoritesFirst, forKey: Key.favoritesFirst) }
     }
-    @Published var startHidden: Bool {
-        didSet { defaults.set(startHidden, forKey: Key.startHidden) }
-    }
     @Published var showAllSection: Bool {
         didSet { defaults.set(showAllSection, forKey: Key.showAllSection) }
     }
@@ -59,7 +56,6 @@ final class AppSettings: ObservableObject {
         japaneseSampleText = defaults.string(forKey: Key.japaneseSample) ?? ""
         latinSampleText = defaults.string(forKey: Key.latinSample) ?? ""
         favoritesFirst = defaults.object(forKey: Key.favoritesFirst) as? Bool ?? false
-        startHidden = defaults.object(forKey: Key.startHidden) as? Bool ?? false
         showAllSection = defaults.object(forKey: Key.showAllSection) as? Bool ?? true
         showFavoritesSection = defaults.object(forKey: Key.showFavoritesSection) as? Bool ?? true
         showSystemSection = defaults.object(forKey: Key.showSystemSection) as? Bool ?? true
@@ -156,7 +152,6 @@ final class AppSettings: ObservableObject {
         static let japaneseSample = "japaneseSampleText"
         static let latinSample = "latinSampleText"
         static let favoritesFirst = "favoritesFirst"
-        static let startHidden = "startHidden"
         static let showAllSection = "showAllSection"
         static let showFavoritesSection = "showFavoritesSection"
         static let showSystemSection = "showSystemSection"
