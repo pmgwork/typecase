@@ -1,6 +1,13 @@
 import Combine
 import Foundation
 
+/// Identifies a character-coverage computation: the text to cover and the
+/// family list it was computed against.
+nonisolated struct PreviewCoverageRequest: Equatable, Sendable {
+    let text: String
+    let familiesRevision: Int
+}
+
 /// A window's library UI state: selection, filters, and preview settings.
 ///
 /// Window state is separate from the shared catalog so a window can browse with
@@ -14,8 +21,17 @@ final class LibraryViewState: ObservableObject {
     @Published var activationFilter: ActivationFilter = .all
     @Published var previewText = ""
     @Published var previewSize: Double = 32
+    @Published private(set) var coverageRevision = 0
 
     private var cachedOutput: (key: FilterKey, output: FilterOutput)?
+    private var appliedCoverage: AppliedCoverage?
+    private var coverageTask: Task<Void, Never>?
+
+    private struct AppliedCoverage {
+        let text: String
+        let familiesRevision: Int
+        let matches: Set<FontFamily.ID>
+    }
 
     private struct FilterKey: Equatable {
         let query: String
@@ -23,6 +39,7 @@ final class LibraryViewState: ObservableObject {
         let category: FontCategory?
         let activationFilter: ActivationFilter
         let catalogRevision: Int
+        let coverageRevision: Int
     }
 
     struct FilterOutput {
@@ -37,17 +54,29 @@ final class LibraryViewState: ObservableObject {
             librarySelection: librarySelection,
             category: category,
             activationFilter: activationFilter,
-            catalogRevision: catalog.dataRevision
+            catalogRevision: catalog.dataRevision,
+            coverageRevision: coverageRevision
         )
         if let cachedOutput, cachedOutput.key == key {
             return cachedOutput.output
         }
+
+        // Coverage stays inactive until a result for the current text and family
+        // list is available, so the list never flickers empty while checking.
+        let coverageFilter: Set<FontFamily.ID>? = {
+            guard !previewCoverageText.isEmpty,
+                  let applied = appliedCoverage,
+                  applied.text == previewCoverageText,
+                  applied.familiesRevision == catalog.familiesRevision else { return nil }
+            return applied.matches
+        }()
 
         var matches: [FontFamily] = []
         var sectionMatches = 0
         for family in catalog.families {
             guard matchesSection(family, catalog: catalog) else { continue }
             sectionMatches += 1
+            if let coverageFilter, !coverageFilter.contains(family.id) { continue }
             if !query.isEmpty {
                 let matchesSearch = family.name.localizedCaseInsensitiveContains(query)
                     || family.localizedName.localizedCaseInsensitiveContains(query)
@@ -76,6 +105,62 @@ final class LibraryViewState: ObservableObject {
         searchText = ""
         category = nil
         activationFilter = .all
+    }
+
+    // MARK: - Character coverage
+
+    /// The state changes that require a new coverage computation.
+    func coverageRequest(catalog: FontCatalog) -> PreviewCoverageRequest {
+        PreviewCoverageRequest(
+            text: previewCoverageText,
+            familiesRevision: catalog.familiesRevision
+        )
+    }
+
+    /// Recomputes which fonts can display the preview text. Called by the
+    /// library view whenever `coverageRequest(catalog:)` changes. Non-empty
+    /// preview text always filters the list.
+    func updateCoverage(catalog: FontCatalog) {
+        let request = coverageRequest(catalog: catalog)
+        guard !request.text.isEmpty else {
+            coverageTask?.cancel()
+            coverageTask = nil
+            if appliedCoverage != nil {
+                appliedCoverage = nil
+                coverageRevision += 1
+            }
+            return
+        }
+
+        if appliedCoverage?.text == request.text,
+           appliedCoverage?.familiesRevision == request.familiesRevision {
+            return
+        }
+
+        coverageTask?.cancel()
+        let scalars = CoverageText.requiredScalars(in: request.text)
+        let queries = catalog.families.compactMap { family -> CoverageFaceQuery? in
+            guard let face = family.previewFace else { return nil }
+            return CoverageFaceQuery(
+                familyID: family.id,
+                postScriptName: face.postScriptName,
+                fileURL: face.fileURL
+            )
+        }
+        coverageTask = Task { [weak self] in
+            let matches = await catalog.coverageMatches(families: queries, scalars: scalars)
+            guard !Task.isCancelled, let self else { return }
+            self.appliedCoverage = AppliedCoverage(
+                text: request.text,
+                familiesRevision: request.familiesRevision,
+                matches: matches
+            )
+            self.coverageRevision += 1
+        }
+    }
+
+    private var previewCoverageText: String {
+        previewText.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     /// Keeps the selection valid after the catalog changes and selects the first

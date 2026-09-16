@@ -33,6 +33,7 @@ final class FontCatalog: ObservableObject {
     private let registrar = FontRegistrar()
     private let folderMonitor = FolderMonitor()
     private let registrationQueue = SerialWorkQueue()
+    private let coverage = FontCoverage()
 
     private var activeManagedNames: Set<String> = []
     /// Names the user deactivated since the last installed-font scan. The scan's
@@ -306,6 +307,13 @@ final class FontCatalog: ObservableObject {
         installedSeeds = seeds
         lastDirectoryFingerprint = output.directoryFingerprint
 
+        if !output.changedFiles.isEmpty {
+            // Coverage is read from the font files themselves, so replaced
+            // files must not keep their cached character sets.
+            let changedFiles = Set(output.changedFiles)
+            Task { await coverage.invalidate(urls: changedFiles) }
+        }
+
         if output.hasChanges || !hasLoadedOnce {
             installedRecords = output.installedRecords
             regroup()
@@ -395,6 +403,9 @@ final class FontCatalog: ObservableObject {
                 }
                 let outcomes = await self.registrar.synchronize(actions)
                 self.applyToggleOutcomes(outcomes, enabled: enabled)
+                // Activation switches a face between the registered font and
+                // its file, which can resolve to different coverage data.
+                await self.coverage.invalidate(urls: urls)
                 self.regroup()
                 self.dataRevision += 1
             }
@@ -420,6 +431,27 @@ final class FontCatalog: ObservableObject {
         if !failures.isEmpty {
             errorMessage = failures.joined(separator: "\n")
         }
+    }
+
+    // MARK: - Character coverage
+
+    /// The families whose preview face can display every character of
+    /// `scalars`.
+    func coverageMatches(
+        families: [CoverageFaceQuery],
+        scalars: [Unicode.Scalar]
+    ) async -> Set<FontFamily.ID> {
+        await coverage.matchingFamilies(families, scalars: scalars)
+    }
+
+    /// The characters of `text` the family's preview face cannot display.
+    func missingCharacters(in text: String, for family: FontFamily) async -> [String] {
+        guard let face = family.previewFace else { return [] }
+        return await coverage.missingCharacters(
+            postScriptName: face.postScriptName,
+            fileURL: face.fileURL,
+            text: text
+        )
     }
 
     // MARK: - Indexes

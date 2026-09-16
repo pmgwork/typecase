@@ -37,6 +37,8 @@ TypeCase uses a quiet, native macOS library interface inspired by the informatio
 - Activation is changed from the list row only; the inspector shows the management hint for sources TypeCase cannot change, not a toggle.
 - Filters and folder actions live in toolbar menus; the preview size sits in the toolbar as a compact “A”/slider/“A” pill in its own toolbar item with the system glass effect, separate from the button groups.
 - A floating preview-text editor is always visible below the font list: a Liquid Glass panel over a bottom gradient that fades list content beneath it, containing a text field, quick preset chips, and a “+” chip that keeps the current text as a user preset.
+- The preview text always filters the library: while it is not empty, the list keeps only fonts whose preview style can display every character of it. Coverage checks run off the main thread and are cached per font file.
+- The inspector lists the preview-text characters the selected font cannot display; list rows stay unmarked.
 - The System Fonts group collapses from a leading disclosure control aligned with folder disclosure arrows; the expanded state is remembered across launches.
 - The sidebar contains navigation rows only, so no bordered buttons appear inside it; folders are added from the sidebar’s own toolbar “+” item beside the sidebar toggle, or the File menu.
 - All sidebar navigation labels use the same system font size, including indented System Fonts scopes and nested folders.

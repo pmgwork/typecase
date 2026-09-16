@@ -334,6 +334,11 @@ private struct FontLibraryView: View {
                 }
             }
         }
+        // Coverage depends on the preview text and the family list, so the check
+        // is requested here rather than from inside the cached filter.
+        .task(id: viewState.coverageRequest(catalog: catalog)) {
+            viewState.updateCoverage(catalog: catalog)
+        }
         .navigationSplitViewColumnWidth(min: 320, ideal: 640)
     }
 
@@ -378,7 +383,12 @@ private struct FontLibraryView: View {
                 } description: {
                     Text(filterSummary.isEmpty ? "Change the search text or filters." : filterSummary)
                 } actions: {
-                    Button("Clear Filters") { viewState.clearFilters() }
+                    if hasActiveToolbarFilters {
+                        Button("Clear Filters") { viewState.clearFilters() }
+                    }
+                    if !activeCoverageText.isEmpty {
+                        Button("Clear Preview Text") { viewState.previewText = "" }
+                    }
                 }
             }
         }
@@ -391,7 +401,19 @@ private struct FontLibraryView: View {
         if !query.isEmpty { parts.append("Search: “\(query)”") }
         if let category = viewState.category { parts.append("Category: \(category.title)") }
         if viewState.activationFilter != .all { parts.append("Status: \(viewState.activationFilter.title)") }
+        if !activeCoverageText.isEmpty { parts.append("Contains: “\(activeCoverageText)”") }
         return parts.joined(separator: " · ")
+    }
+
+    /// The toolbar filters, excluding the always-on preview-text coverage.
+    private var hasActiveToolbarFilters: Bool {
+        !viewState.searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || viewState.category != nil
+            || viewState.activationFilter != .all
+    }
+
+    private var activeCoverageText: String {
+        viewState.previewText.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private var emptySectionTitle: String {
@@ -570,6 +592,7 @@ private struct FontInspector: View {
     @ObservedObject var viewState: LibraryViewState
     @Binding var comparisonVisible: Bool
     @State private var newTag = ""
+    @State private var missingCharacters: [String] = []
 
     var body: some View {
         if let family = catalog.family(for: viewState.selection) {
@@ -597,6 +620,10 @@ private struct FontInspector: View {
                         lines: 2
                     )
 
+                    if !missingCharacters.isEmpty {
+                        missingCharactersNotice
+                    }
+
                     Group {
                         LabeledContent("Source", value: family.source.title)
                         LabeledContent("Language", value: family.supportsJapanese ? "Japanese" : "Latin / Other")
@@ -622,6 +649,15 @@ private struct FontInspector: View {
                     tagsSection(for: family)
                 }
                 .padding(20)
+            }
+            .task(id: missingCharactersKey(for: family)) {
+                let text = viewState.previewText(for: family)
+                // Clear while checking so the notice never describes the
+                // previously selected font.
+                missingCharacters = []
+                let missing = await catalog.missingCharacters(in: text, for: family)
+                guard !Task.isCancelled else { return }
+                missingCharacters = missing
             }
         } else if viewState.selection.count > 1 {
             ContentUnavailableView {
@@ -669,6 +705,37 @@ private struct FontInspector: View {
                 }
         }
     }
+
+    private func missingCharactersKey(for family: FontFamily) -> MissingCharactersKey {
+        MissingCharactersKey(familyID: family.id, text: viewState.previewText(for: family))
+    }
+
+    /// Characters of the preview text the selected font cannot display. The
+    /// inspector is the only place missing coverage is surfaced; list rows stay
+    /// unmarked.
+    private var missingCharactersNotice: some View {
+        let visible = missingCharacters.prefix(16)
+        let remaining = missingCharacters.count - visible.count
+        let list = visible.joined(separator: " ")
+        return Label {
+            Text(remaining > 0
+                ? "Missing characters: \(list) … (+\(remaining))"
+                : "Missing characters: \(list)")
+        } icon: {
+            Image(systemName: "exclamationmark.triangle")
+        }
+        .font(.callout)
+        .foregroundStyle(.secondary)
+        .textSelection(.enabled)
+        .help("The selected font cannot display these characters of the preview text")
+    }
+}
+
+/// Re-checks the inspector's missing characters only when the font or the
+/// preview text changes.
+private struct MissingCharactersKey: Equatable {
+    let familyID: String
+    let text: String
 }
 
 private struct ComparisonView: View {
