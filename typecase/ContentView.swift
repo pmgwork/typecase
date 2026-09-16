@@ -27,13 +27,6 @@ struct ContentView: View {
         .frame(minWidth: 860, minHeight: 520)
         .toolbar {
             ToolbarItemGroup {
-                Button {
-                    catalog.refresh()
-                } label: {
-                    Label("Refresh", systemImage: "arrow.clockwise")
-                }
-                .help("Refresh the font library")
-
                 Menu {
                     Picker("Category", selection: $viewState.category) {
                         Text("All Categories").tag(FontCategory?.none)
