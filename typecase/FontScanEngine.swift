@@ -297,10 +297,14 @@ actor FontScanEngine {
         let traits = CTFontDescriptorCopyAttribute(descriptor, kCTFontTraitsAttribute) as? [CFString: Any]
         let symbolic = (traits?[kCTFontSymbolicTrait] as? NSNumber)?.uint32Value ?? 0
         let category = classify(family: family, style: style, symbolicTraits: symbolic)
+        // Core Text normalizes weight to [-1, 1]; scale it so styles sort
+        // light-to-heavy no matter where the face came from.
+        let normalizedWeight = (traits?[kCTFontWeightTrait] as? NSNumber)?.doubleValue
+        let weight = normalizedWeight.map { Int(($0 * 1000).rounded()) } ?? fallbackWeight
         let face = FontFace(
             postScriptName: name,
             styleName: style,
-            weight: fallbackWeight,
+            weight: weight,
             fileURL: url,
             isInstalled: false,
             isManaged: managed

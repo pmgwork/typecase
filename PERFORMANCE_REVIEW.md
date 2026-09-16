@@ -256,5 +256,4 @@ Time ProfilerでCPU時間とメインスレッド占有、Hangsで停止、Swift
 - **バックストップの検出範囲:** ディレクトリ指紋に各ルート自身の更新日時を含めた。列挙はルートの内容しか返さず、ルート直下の追加・削除を検出できなかった。あわせて 1 エントリあたりの属性読み取りを 1 回にまとめた。
 - **Refresh の経路短縮:** File メニューから通知を配信し、各ウィンドウが `catalog.refresh()` を呼ぶ経路をやめ、共有カタログを直接更新する。
 - **未使用コードの削除:** `FontCatalog.families(in:)`、`LibraryViewState.sectionIsEmpty(catalog:)`、`LibrarySelection.title`、`FolderMonitor.stop()`、`PreviewTextEditor.isFieldFocused`、`FontPreviewText.color`。
-- **プレビュー入力欄の外観:** DESIGN.md の方針に合わせ、material・影・独自枠線をやめ、リスト下の通常領域に置いた。
 - **インスペクタの Styles 一覧を削除:** 一覧行のダブルクリック展開と内容が重複するため、右パネルのスタイル別プレビュー一覧を削除した。スタイル数は LabeledContent に残る。

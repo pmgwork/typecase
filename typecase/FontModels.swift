@@ -59,6 +59,7 @@ nonisolated enum FontCategory: String, Codable, CaseIterable, Identifiable, Send
 nonisolated struct FontFace: Identifiable, Hashable, Sendable {
     let postScriptName: String
     let styleName: String
+    /// Core Text weight scaled to an integer so style lists sort light to heavy.
     let weight: Int
     let fileURL: URL?
     let isInstalled: Bool

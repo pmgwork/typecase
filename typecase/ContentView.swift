@@ -17,7 +17,7 @@ struct ContentView: View {
             FontLibraryView(catalog: catalog, viewState: viewState)
         }
         .navigationTitle("TypeCase")
-        .searchable(text: $viewState.searchText, placement: .toolbar, prompt: "Font or foundry")
+        .searchable(text: $viewState.searchText, placement: .toolbar, prompt: "Search")
         .inspector(isPresented: $inspectorVisible) {
             FontInspector(catalog: catalog, viewState: viewState, comparisonVisible: $comparisonVisible)
                 .inspectorColumnWidth(min: 260, ideal: 320, max: 400)
@@ -311,10 +311,27 @@ private struct FontLibraryView: View {
                 }
                 .listStyle(.inset)
                 // The preview-text editor stays pinned below the list.
-                Divider()
-                PreviewTextEditor(viewState: viewState)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 12)
+                .safeAreaInset(edge: .bottom, spacing: 0) {
+                    PreviewTextEditor(viewState: viewState)
+                        .padding(.horizontal, 16)
+                        .padding(.top, 28)
+                        .padding(.bottom, 16)
+                        .background {
+                            // Fade list content out before it reaches the panel; busy
+                            // font previews behind the glass hurt legibility. This is
+                            // the same gradient-fade approach the system uses for bars.
+                            LinearGradient(
+                                stops: [
+                                    .init(color: Color(nsColor: .windowBackgroundColor).opacity(0), location: 0),
+                                    .init(color: Color(nsColor: .windowBackgroundColor).opacity(0.9), location: 0.45),
+                                    .init(color: Color(nsColor: .windowBackgroundColor).opacity(0.9), location: 1),
+                                ],
+                                startPoint: .top,
+                                endPoint: .bottom
+                            )
+                            .allowsHitTesting(false)
+                        }
+                }
             }
         }
         .navigationSplitViewColumnWidth(min: 320, ideal: 640)
@@ -458,16 +475,19 @@ private struct FontFamilyRow: View, Equatable {
                 VStack(alignment: .leading, spacing: 14) {
                     ForEach(family.faces) { face in
                         VStack(alignment: .leading, spacing: 4) {
-                            HStack {
+                            HStack(spacing: 8) {
+                                if family.isManaged {
+                                    Image(systemName: face.isInstalled ? "circle.inset.filled" : "circle")
+                                        .font(.callout)
+                                        .foregroundStyle(face.isInstalled ? Color.accentColor : Color.secondary)
+                                        .help(face.isInstalled ? "Enabled" : "Disabled")
+                                        .frame(width: 16)
+                                } else {
+                                    ActivationLock(hint: family.source.managementHint)
+                                }
                                 Text(face.styleName)
                                     .font(.callout)
                                     .foregroundStyle(.secondary)
-                                Spacer()
-                                if family.isManaged {
-                                    Image(systemName: face.isInstalled ? "circle.inset.filled" : "circle")
-                                        .font(.caption)
-                                        .foregroundStyle(face.isInstalled ? Color.accentColor : Color.secondary)
-                                }
                             }
                             FontPreviewText(
                                 text: previewText,
@@ -489,9 +509,11 @@ private struct FontFamilyRow: View, Equatable {
         }
         .padding(.vertical, 6)
         .contentShape(.rect)
-        .onTapGesture(count: 2) {
-            toggleExpanded()
-        }
+        // Let the List select on the first click without waiting for the
+        // double-click recognizer to fail.
+        .simultaneousGesture(
+            TapGesture(count: 2).onEnded { toggleExpanded() }
+        )
         .help(isExpanded ? "Double-click to hide styles" : "Double-click to show all styles")
     }
 
@@ -507,11 +529,9 @@ private struct FontFamilyRow: View, Equatable {
             }
             .buttonStyle(.borderless)
             .help(activationHelp)
+            .frame(width: 16)
         } else {
-            Image(systemName: "lock.fill")
-                .font(.caption)
-                .foregroundStyle(.tertiary)
-                .help(family.source.managementHint)
+            ActivationLock(hint: family.source.managementHint)
         }
     }
 
@@ -527,6 +547,21 @@ private struct FontFamilyRow: View, Equatable {
     private var activationHelp: String {
         if family.isPartiallyEnabled { return "Some styles are disabled — click to enable all" }
         return family.isEnabled ? "Deactivate" : "Activate"
+    }
+}
+
+/// The lock shown in place of the radio button for fonts whose activation is
+/// managed outside TypeCase. The fixed width keeps names aligned in both the
+/// family row and its expanded style rows.
+private struct ActivationLock: View {
+    let hint: String
+
+    var body: some View {
+        Image(systemName: "lock.fill")
+            .font(.callout)
+            .foregroundStyle(.tertiary)
+            .help(hint)
+            .frame(width: 16)
     }
 }
 
@@ -806,7 +841,9 @@ private struct PreviewTextEditor: View {
                 .accessibilityLabel("Add the current text as a preset")
             }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(16)
+        .frame(maxWidth: 720)
+        .glassEffect(.regular, in: .rect(cornerRadius: 14))
     }
 
     private var trimmedPreviewText: String {
