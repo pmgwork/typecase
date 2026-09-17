@@ -109,8 +109,14 @@ final class FontCatalog: ObservableObject {
         saveTags()
     }
 
+    /// Stores the user's classification, or clears the override when the chosen
+    /// value is the one the font file already implies.
     func setCategory(_ category: FontCategory, for family: FontFamily) {
-        categoryOverrides[family.id] = category
+        if category == family.detectedCategory {
+            categoryOverrides.removeValue(forKey: family.id)
+        } else {
+            categoryOverrides[family.id] = category
+        }
         defaults.set(categoryOverrides.mapValues(\.rawValue), forKey: "categoryOverrides")
         regroup()
         dataRevision += 1
@@ -774,6 +780,7 @@ final class FontCatalog: ObservableObject {
                 manufacturer: first.manufacturer,
                 source: source,
                 category: categoryOverrides[id] ?? first.category,
+                detectedCategory: first.category,
                 faces: deduplicated
             )
         }

@@ -581,21 +581,7 @@ private struct FontLibraryView: View {
             .padding(.horizontal, 16)
             .padding(.top, 28)
             .padding(.bottom, 16)
-            .background {
-                // Fade list content out before it reaches the panel; busy
-                // font previews behind the glass hurt legibility. This is
-                // the same gradient-fade approach the system uses for bars.
-                LinearGradient(
-                    stops: [
-                        .init(color: canvasColor.opacity(0), location: 0),
-                        .init(color: canvasColor.opacity(0.9), location: 0.45),
-                        .init(color: canvasColor.opacity(0.9), location: 1),
-                    ],
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
-                .allowsHitTesting(false)
-            }
+            .frame(maxWidth: .infinity)
     }
 
     /// The specimen canvas color: the chosen background, or the window color
@@ -1070,15 +1056,15 @@ private struct FontInspector: View {
                         .help("Copy the font names")
                     }
 
+                    // The inspector's specimen always follows the system
+                    // appearance; the chosen specimen colors paint the list.
                     FontPreviewText(
                         text: previewText(for: family),
                         postScriptName: family.previewFace?.postScriptName,
                         fileURL: family.previewFace?.fileURL,
                         size: Self.previewSize,
                         lines: 2,
-                        variations: settings.variationValues(for: family.previewFace),
-                        backgroundColor: settings.previewBackgroundColor,
-                        textColor: settings.previewTextColor
+                        variations: settings.variationValues(for: family.previewFace)
                     )
 
                     if !missingCharacters.isEmpty {
@@ -1089,14 +1075,6 @@ private struct FontInspector: View {
                         inspectorDetail("Source", family.source.title)
                         inspectorDetail("Language", family.languageDescription)
                         inspectorDetail("Styles", "\(family.faces.count)")
-                        inspectorDetail("Classification") {
-                            Picker("Classification", selection: classificationBinding(for: family)) {
-                                ForEach(FontCategory.allCases) { category in
-                                    Text(category.title).tag(category)
-                                }
-                            }
-                            .labelsHidden()
-                        }
                     }
 
                     if let metadata {
@@ -1117,6 +1095,8 @@ private struct FontInspector: View {
                     }
 
                     Divider()
+
+                    classificationSection(for: family)
 
                     tagsSection(for: family)
                 }
@@ -1165,6 +1145,26 @@ private struct FontInspector: View {
             get: { family.category },
             set: { catalog.setCategory($0, for: family) }
         )
+    }
+
+    /// The user-editable classification. While it differs from the value the
+    /// font file implies, the detected value stays visible as a caption.
+    private func classificationSection(for family: FontFamily) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            inspectorDetail("Classification") {
+                Picker("Classification", selection: classificationBinding(for: family)) {
+                    ForEach(FontCategory.allCases) { category in
+                        Text(category.title).tag(category)
+                    }
+                }
+                .labelsHidden()
+            }
+            if family.category != family.detectedCategory {
+                Text("Detected: \(family.detectedCategory.title)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
     }
 
     // MARK: - File metadata
@@ -1500,11 +1500,27 @@ private struct SidebarLabel: View {
     }
 }
 
+/// A user-defined preset: the chip's name and the preview text it inserts.
+private struct PreviewPreset: Identifiable, Equatable {
+    let name: String
+    var text: String
+
+    /// Names are unique within the custom presets, so the name identifies the
+    /// chip; saving a name again updates that preset instead of adding a
+    /// duplicate.
+    var id: String { name }
+}
+
 /// Persistent preview-text editor with quick presets, pinned below the font
-/// list: one text field above a row of sample chips.
+/// list: a text field with a compact preset menu and add button.
 private struct PreviewTextEditor: View {
     @ObservedObject var viewState: LibraryViewState
-    @State private var customPresets = UserDefaults.standard.stringArray(forKey: PreviewTextEditor.presetsKey) ?? []
+    @State private var customPresets = PreviewTextEditor.loadCustomPresets()
+    @State private var isAddingPreset = false
+    @State private var newPresetName = ""
+    @State private var newPresetText = ""
+    @State private var selectedPreset: (name: String, text: String, isCustom: Bool)?
+    @FocusState private var newPresetNameFocused: Bool
 
     private static let presetsKey = "previewTextPresets"
 
@@ -1524,50 +1540,63 @@ private struct PreviewTextEditor: View {
     ]
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        HStack(spacing: 12) {
             TextField("Enter preview text…", text: $viewState.previewText)
-                .textFieldStyle(.roundedBorder)
+                .textFieldStyle(.plain)
+                .accessibilityLabel("Preview text")
 
-            HStack(spacing: 8) {
-                // One row that scrolls sideways rather than wrapping, so the
-                // panel keeps its height at every window width.
-                ScrollView(.horizontal) {
-                    HStack(spacing: 8) {
-                        ForEach(Self.builtInPresets, id: \.title) { preset in
-                            presetChip(preset.title) {
+            HStack(spacing: 10) {
+                Menu {
+                    ForEach(Self.builtInPresets, id: \.title) { preset in
+                        Button(preset.title) {
+                            selectedPreset = (preset.title, preset.text, false)
+                            viewState.previewText = preset.text
+                        }
+                    }
+
+                    if !customPresets.isEmpty {
+                        Divider()
+                        ForEach(customPresets) { preset in
+                            Button(preset.name) {
+                                selectedPreset = (preset.name, preset.text, true)
                                 viewState.previewText = preset.text
                             }
                         }
-
-                        ForEach(customPresets, id: \.self) { preset in
-                            presetChip(preset) {
-                                viewState.previewText = preset
-                            }
-                            .contextMenu {
-                                Button("Remove Preset", role: .destructive) {
+                        Divider()
+                        Menu("Remove Preset") {
+                            ForEach(customPresets) { preset in
+                                Button(preset.name, role: .destructive) {
                                     removePreset(preset)
                                 }
                             }
                         }
                     }
-                }
-
-                // The add button stays outside the scrolling area so it is
-                // always reachable.
-                Button {
-                    addCurrentAsPreset()
                 } label: {
-                    chipLabel {
-                        Image(systemName: "plus")
-                    }
+                    Text(presetMenuTitle)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+                .help("Choose preview text")
+
+                Button {
+                    presentAddPreset()
+                } label: {
+                    Image(systemName: "plus")
+                        .frame(width: 24, height: 24)
+                        .contentShape(.rect)
                 }
                 .buttonStyle(.plain)
-                .disabled(trimmedPreviewText.isEmpty)
-                .help("Add the current text as a preset")
-                .accessibilityLabel("Add the current text as a preset")
+                .help("Add a preset with a name and preview text")
+                .accessibilityLabel("Add a preset with a name and preview text")
+                .popover(isPresented: $isAddingPreset, arrowEdge: .top) {
+                    addPresetForm
+                }
             }
         }
-        .padding(16)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
         .frame(maxWidth: 720)
         .glassEffect(.regular, in: .rect(cornerRadius: 14))
     }
@@ -1576,37 +1605,110 @@ private struct PreviewTextEditor: View {
         viewState.previewText.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    private func presetChip(_ title: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            chipLabel {
-                Text(title).lineLimit(1)
+    private var presetMenuTitle: String {
+        let text = viewState.previewText
+        // Preserve the actual choice when multiple presets contain the same text.
+        if let selectedPreset, selectedPreset.text == text {
+            let exists = selectedPreset.isCustom
+                ? customPresets.contains { $0.name == selectedPreset.name && $0.text == text }
+                : Self.builtInPresets.contains { $0.title == selectedPreset.name && $0.text == text }
+            if exists { return selectedPreset.name }
+        }
+        if let preset = customPresets.first(where: { $0.text == text }) {
+            return preset.name
+        }
+        if let preset = Self.builtInPresets.first(where: { $0.text == text }) {
+            return preset.title
+        }
+        return trimmedPreviewText.isEmpty ? "Presets" : "Custom"
+    }
+
+    /// The form behind the “+” button: a preset name and the preview text it
+    /// inserts, starting from the text that is already in the field.
+    private var addPresetForm: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            presetField("Name", prompt: "e.g. abc, lorem, symbols", text: $newPresetName)
+                .focused($newPresetNameFocused)
+            presetField("Preview Text", prompt: "Sample preview text", text: $newPresetText)
+
+            HStack {
+                Button("Cancel") { isAddingPreset = false }
+                    .keyboardShortcut(.cancelAction)
+                Spacer(minLength: 8)
+                Button("Save") { savePreset() }
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(trimmedNewPresetName.isEmpty || trimmedNewPresetText.isEmpty)
             }
         }
-        .buttonStyle(.plain)
-        .help(title)
+        .padding(16)
+        .frame(width: 300)
+        .defaultFocus($newPresetNameFocused, true)
     }
 
-    private func chipLabel<Content: View>(@ViewBuilder content: () -> Content) -> some View {
-        content()
-            .padding(.horizontal, 10)
-            .padding(.vertical, 4)
-            .background(
-                Color.primary.opacity(0.08),
-                in: RoundedRectangle(cornerRadius: 6, style: .continuous)
-            )
-            .contentShape(.rect)
+    private func presetField(_ title: String, prompt: String, text: Binding<String>) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+            TextField(prompt, text: text)
+                .textFieldStyle(.roundedBorder)
+        }
     }
 
-    private func addCurrentAsPreset() {
-        let text = trimmedPreviewText
-        guard !text.isEmpty, !customPresets.contains(text) else { return }
-        customPresets.append(text)
-        UserDefaults.standard.set(customPresets, forKey: Self.presetsKey)
+    private var trimmedNewPresetName: String {
+        newPresetName.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    private func removePreset(_ preset: String) {
-        customPresets.removeAll { $0 == preset }
-        UserDefaults.standard.set(customPresets, forKey: Self.presetsKey)
+    private var trimmedNewPresetText: String {
+        newPresetText.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// Opens the form with the current text as its starting point, so the
+    /// common case is only a name away.
+    private func presentAddPreset() {
+        newPresetName = ""
+        newPresetText = trimmedPreviewText
+        isAddingPreset = true
+    }
+
+    private func savePreset() {
+        let name = trimmedNewPresetName
+        let text = trimmedNewPresetText
+        guard !name.isEmpty, !text.isEmpty else { return }
+        if let index = customPresets.firstIndex(where: { $0.name == name }) {
+            customPresets[index].text = text
+        } else {
+            customPresets.append(PreviewPreset(name: name, text: text))
+        }
+        storeCustomPresets()
+        isAddingPreset = false
+    }
+
+    private func removePreset(_ preset: PreviewPreset) {
+        customPresets.removeAll { $0.id == preset.id }
+        storeCustomPresets()
+    }
+
+    /// Loads the stored presets, migrating the text-only ones that predated
+    /// names: they keep showing their text as the chip name.
+    private static func loadCustomPresets() -> [PreviewPreset] {
+        let defaults = UserDefaults.standard
+        if let stored = defaults.array(forKey: presetsKey) as? [[String: String]] {
+            return stored.compactMap { entry in
+                guard let name = entry["name"], let text = entry["text"],
+                      !name.isEmpty, !text.isEmpty else { return nil }
+                return PreviewPreset(name: name, text: text)
+            }
+        }
+        return (defaults.stringArray(forKey: presetsKey) ?? []).map {
+            PreviewPreset(name: $0, text: $0)
+        }
+    }
+
+    private func storeCustomPresets() {
+        UserDefaults.standard.set(
+            customPresets.map { ["name": $0.name, "text": $0.text] },
+            forKey: Self.presetsKey
+        )
     }
 }
-

@@ -127,7 +127,11 @@ nonisolated struct FontFamily: Identifiable, Hashable, Sendable {
     let localizedNames: [FontLanguage: String]
     let manufacturer: String
     let source: FontSource
+    /// The effective classification: the user's override, or the detected one.
     let category: FontCategory
+    /// The classification detected from the font file's traits, kept so the
+    /// inspector can show what the user's override replaced.
+    let detectedCategory: FontCategory
     let faces: [FontFace]
 
     /// The display name: the family's name in its highest-priority language,
