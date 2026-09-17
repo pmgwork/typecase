@@ -23,9 +23,21 @@ final class FontResolver {
 
     /// Resolves installed fonts by PostScript name and disabled local fonts
     /// directly from their files. Creating a CTFont from a file descriptor does
-    /// not register or activate that font for the process.
-    func previewFont(postScriptName: String?, fileURL: URL?, size: CGFloat) -> Font {
+    /// not register or activate that font for the process. When `variations` is
+    /// set, the font is built as a variable instance with those axis values.
+    func previewFont(
+        postScriptName: String?,
+        fileURL: URL?,
+        size: CGFloat,
+        variations: [UInt32: Double]? = nil
+    ) -> Font {
         guard let postScriptName else { return .system(size: size) }
+        if let variations, !variations.isEmpty,
+           let base = baseDescriptor(postScriptName: postScriptName, fileURL: fileURL, size: size) {
+            let attributes = [kCTFontVariationAttribute: variationDictionary(variations)] as CFDictionary
+            let descriptor = CTFontDescriptorCreateCopyWithAttributes(base, attributes)
+            return Font(CTFontCreateWithFontDescriptor(descriptor, size, nil))
+        }
         if isAvailable(postScriptName) {
             return .custom(postScriptName, size: size)
         }
@@ -35,6 +47,62 @@ final class FontResolver {
         }
         let font = CTFontCreateWithFontDescriptor(descriptor, size, nil)
         return Font(font)
+    }
+
+    /// The axes of a variable font and the coordinates of the instance
+    /// `postScriptName` resolves to at `size`. Returns nil for static fonts.
+    func variableInfo(postScriptName: String, fileURL: URL?, size: CGFloat) -> VariableFontInfo? {
+        guard let font = resolvedFont(postScriptName: postScriptName, fileURL: fileURL, size: size),
+              let rawAxes = CTFontCopyVariationAxes(font) as? [[CFString: Any]] else { return nil }
+        let axes = rawAxes.compactMap { axis -> VariableFontAxis? in
+            guard let tag = (axis[kCTFontVariationAxisIdentifierKey] as? NSNumber)?.uint32Value,
+                  let name = axis[kCTFontVariationAxisNameKey] as? String else { return nil }
+            let minimum = (axis[kCTFontVariationAxisMinimumValueKey] as? NSNumber)?.doubleValue ?? 0
+            let maximum = (axis[kCTFontVariationAxisMaximumValueKey] as? NSNumber)?.doubleValue ?? 0
+            guard maximum > minimum else { return nil }
+            let defaultValue = (axis[kCTFontVariationAxisDefaultValueKey] as? NSNumber)?.doubleValue ?? minimum
+            return VariableFontAxis(
+                tag: tag,
+                name: name,
+                minimum: minimum,
+                maximum: maximum,
+                defaultValue: defaultValue
+            )
+        }
+        guard !axes.isEmpty else { return nil }
+        let current = (CTFontCopyVariation(font) as? [NSNumber: NSNumber]) ?? [:]
+        return VariableFontInfo(
+            axes: axes,
+            currentValues: Dictionary(uniqueKeysWithValues: current.map { ($0.key.uint32Value, $0.value.doubleValue) })
+        )
+    }
+
+    // MARK: - Resolution
+
+    private func resolvedFont(postScriptName: String, fileURL: URL?, size: CGFloat) -> CTFont? {
+        let registered = CTFontCreateWithName(postScriptName as CFString, size, nil)
+        if (CTFontCopyPostScriptName(registered) as String) == postScriptName { return registered }
+        guard let fileURL,
+              let descriptor = descriptor(postScriptName: postScriptName, fileURL: fileURL) else { return nil }
+        return CTFontCreateWithFontDescriptor(descriptor, size, nil)
+    }
+
+    /// The descriptor of the requested instance before any axis overrides.
+    private func baseDescriptor(postScriptName: String, fileURL: URL?, size: CGFloat) -> CTFontDescriptor? {
+        if isAvailable(postScriptName) {
+            return CTFontDescriptorCreateWithNameAndSize(postScriptName as CFString, size)
+        }
+        guard let fileURL else { return nil }
+        return descriptor(postScriptName: postScriptName, fileURL: fileURL)
+    }
+
+    private func variationDictionary(_ variations: [UInt32: Double]) -> CFDictionary {
+        var values: [NSNumber: NSNumber] = [:]
+        values.reserveCapacity(variations.count)
+        for (tag, value) in variations {
+            values[NSNumber(value: tag)] = NSNumber(value: value)
+        }
+        return values as CFDictionary
     }
 
     private func descriptor(postScriptName: String, fileURL: URL) -> CTFontDescriptor? {

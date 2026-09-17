@@ -73,34 +73,34 @@ private struct SidebarSettingsView: View {
             Section("Show these items in the sidebar:") {
                 SidebarItemToggle(
                     title: LibrarySection.all.title,
-                    systemImage: LibrarySection.all.systemImage,
+                    icon: LibrarySection.all.icon,
                     isOn: $settings.showAllSection
                 )
                 SidebarItemToggle(
                     title: LibrarySection.favorites.title,
-                    systemImage: LibrarySection.favorites.systemImage,
+                    icon: LibrarySection.favorites.icon,
                     isOn: $settings.showFavoritesSection
                 )
                 SidebarItemToggle(
                     title: LibrarySection.system.title,
-                    systemImage: LibrarySection.system.systemImage,
+                    icon: LibrarySection.system.icon,
                     isOn: $settings.showSystemSection
                 )
                 SidebarItemToggle(
                     title: LibrarySection.local.title,
-                    systemImage: LibrarySection.local.systemImage,
+                    icon: LibrarySection.local.icon,
                     isOn: $settings.showLocalSection
                 )
-                SidebarItemToggle(
-                    title: LibrarySection.adobe.title,
-                    systemImage: LibrarySection.adobe.systemImage,
-                    isOn: $settings.showAdobeSection
-                )
-                SidebarItemToggle(
-                    title: LibrarySection.morisawa.title,
-                    systemImage: LibrarySection.morisawa.systemImage,
-                    isOn: $settings.showMorisawaSection
-                )
+                ForEach(FontProviderRegistry.all) { provider in
+                    SidebarItemToggle(
+                        title: provider.title,
+                        icon: provider.icon,
+                        isOn: Binding(
+                            get: { settings.isProviderSectionVisible(provider.id) },
+                            set: { settings.setProviderSection(provider.id, visible: $0) }
+                        )
+                    )
+                }
                 SidebarItemToggle(title: "Tags", systemImage: "tag", isOn: $settings.showTagsSection)
             }
         }
@@ -112,13 +112,23 @@ private struct SidebarSettingsView: View {
 /// One checkbox in the sidebar visibility list: checkbox, icon, name.
 private struct SidebarItemToggle: View {
     let title: String
-    let systemImage: String
+    let icon: SourceIcon
     @Binding var isOn: Bool
+
+    init(title: String, systemImage: String, isOn: Binding<Bool>) {
+        self.init(title: title, icon: .symbol(systemImage), isOn: isOn)
+    }
+
+    init(title: String, icon: SourceIcon, isOn: Binding<Bool>) {
+        self.title = title
+        self.icon = icon
+        self._isOn = isOn
+    }
 
     var body: some View {
         Toggle(isOn: $isOn) {
             HStack(spacing: 10) {
-                Image(systemName: systemImage)
+                SourceIconView(icon: icon)
                     .frame(width: 24, alignment: .center)
                 Text(title)
             }
@@ -146,6 +156,35 @@ private struct PreviewSettingsView: View {
             }
 
             Section {
+                LabeledContent("Background") {
+                    colorControl($settings.previewBackgroundColor, fallback: Color(nsColor: .windowBackgroundColor), title: "Background Color")
+                }
+                LabeledContent("Text") {
+                    colorControl($settings.previewTextColor, fallback: Color(nsColor: .labelColor), title: "Text Color")
+                }
+                HStack {
+                    Button("System") {
+                        settings.setPreviewColors(background: nil, text: nil)
+                    }
+                    Button("Light") {
+                        settings.setPreviewColors(background: .white, text: .black)
+                    }
+                    Button("Dark") {
+                        settings.setPreviewColors(
+                            background: Color(red: 0.11, green: 0.11, blue: 0.12),
+                            text: .white
+                        )
+                    }
+                }
+            } header: {
+                Text("Colors")
+            } footer: {
+                Text("Applies to font specimens. Shared with the toolbar color controls. Choose System to follow the macOS appearance.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section {
                 TextField("Japanese", text: $settings.japaneseSampleText, prompt: Text(AppSettings.japaneseSampleDefault))
                 TextField("Latin", text: $settings.latinSampleText, prompt: Text(AppSettings.latinSampleDefault))
                 Button("Restore Defaults") { settings.resetSampleText() }
@@ -159,6 +198,17 @@ private struct PreviewSettingsView: View {
         }
         .formStyle(.grouped)
         .fixedSize(horizontal: false, vertical: true)
+    }
+}
+
+private func colorControl(_ color: Binding<Color?>, fallback: Color, title: String) -> some View {
+    SpecimenColorPicker(color: color, fallback: fallback, title: title) {
+        RoundedRectangle(cornerRadius: 5)
+            .fill(color.wrappedValue ?? fallback)
+            .frame(width: 32, height: 22)
+            .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(.primary.opacity(0.2)))
+            .padding(3)
+            .contentShape(.rect)
     }
 }
 

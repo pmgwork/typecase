@@ -44,6 +44,9 @@ nonisolated struct InstalledFaceSeed: Hashable, Sendable {
 
 nonisolated struct FontFileStamp: Hashable, Sendable {
     let modification: TimeInterval
+    /// When the file was created, which is when a font was added to a folder.
+    /// `0` when the file system does not report it.
+    let creation: TimeInterval
     let size: Int64
 }
 
@@ -83,11 +86,33 @@ nonisolated struct FontScanOutput: Sendable {
 actor FontScanEngine {
     private static let fontExtensions: Set<String> = ["otf", "ttf", "ttc", "dfont"]
 
+    private var manifestCache: [String: (stamp: [Date?], names: Set<String>)] = [:]
+
+    /// The font file names each provider's app records, reread only when a
+    /// manifest's modification date changes.
+    private func providerManifestNames() -> [String: Set<String>] {
+        var result: [String: Set<String>] = [:]
+        for provider in FontProviderRegistry.all where !provider.manifestURLs.isEmpty {
+            let stamp: [Date?] = provider.manifestURLs.map { url in
+                (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
+            }
+            if let cached = manifestCache[provider.id], cached.stamp == stamp {
+                result[provider.id] = cached.names
+                continue
+            }
+            let names = FontProviderManifests.installedFontFileNames(for: provider)
+            manifestCache[provider.id] = (stamp, names)
+            result[provider.id] = names
+        }
+        return result
+    }
+
     func scan(_ input: FontScanInput) -> FontScanOutput {
         var nameCache = input.japaneseNameCache
         var directoryDates: [String: TimeInterval] = [:]
         var filesByRoot: [URL: [URL]] = [:]
         var currentStamps: [URL: FontFileStamp] = [:]
+        let manifestNames = providerManifestNames()
 
         for root in input.roots {
             // The enumerator reports a directory's contents, never the directory
@@ -101,12 +126,14 @@ actor FontScanEngine {
             var rawFiles: [URL] = []
             if let enumerator = FileManager.default.enumerator(
                 at: root,
-                includingPropertiesForKeys: [.isDirectoryKey, .isRegularFileKey, .contentModificationDateKey, .fileSizeKey],
+                includingPropertiesForKeys: [
+                    .isDirectoryKey, .isRegularFileKey, .contentModificationDateKey, .creationDateKey, .fileSizeKey,
+                ],
                 options: [.skipsHiddenFiles, .skipsPackageDescendants]
             ) {
                 for case let url as URL in enumerator {
                     let values = try? url.resourceValues(forKeys: [
-                        .isDirectoryKey, .isRegularFileKey, .contentModificationDateKey, .fileSizeKey,
+                        .isDirectoryKey, .isRegularFileKey, .contentModificationDateKey, .creationDateKey, .fileSizeKey,
                     ])
                     if values?.isDirectory == true {
                         let path = url.standardizedFileURL.path
@@ -120,6 +147,7 @@ actor FontScanEngine {
                     rawFiles.append(url)
                     currentStamps[url] = FontFileStamp(
                         modification: values?.contentModificationDate?.timeIntervalSince1970 ?? 0,
+                        creation: values?.creationDate?.timeIntervalSince1970 ?? 0,
                         size: Int64(values?.fileSize ?? 0)
                     )
                 }
@@ -149,7 +177,7 @@ actor FontScanEngine {
         }
         for url in changed {
             guard let stamp = currentStamps[url] else { continue }
-            files[url] = parseFontFile(url, stamp: stamp, nameCache: &nameCache)
+            files[url] = parseFontFile(url, stamp: stamp, manifestNames: manifestNames, nameCache: &nameCache)
         }
 
         let installedChanged = input.previousInstalledSeeds != input.installedSeeds
@@ -169,6 +197,7 @@ actor FontScanEngine {
                     fallbackStyle: seed.styleName,
                     fallbackWeight: seed.weight,
                     managed: false,
+                    manifestNames: manifestNames,
                     nameCache: &nameCache
                 )
             }
@@ -247,6 +276,7 @@ actor FontScanEngine {
     private func parseFontFile(
         _ url: URL,
         stamp: FontFileStamp,
+        manifestNames: [String: Set<String>],
         nameCache: inout [URL: [String: String]]
     ) -> CachedFontFile {
         var names: Set<String> = []
@@ -260,6 +290,7 @@ actor FontScanEngine {
                     descriptor: descriptor,
                     fallbackURL: url,
                     managed: true,
+                    manifestNames: manifestNames,
                     nameCache: &nameCache
                 ) {
                     records.append(record)
@@ -276,6 +307,7 @@ actor FontScanEngine {
         fallbackStyle: String? = nil,
         fallbackWeight: Int = 5,
         managed: Bool,
+        manifestNames: [String: Set<String>],
         nameCache: inout [URL: [String: String]]
     ) -> FaceRecord? {
         let family = attribute(descriptor, key: kCTFontFamilyNameAttribute) ?? fallbackFamily
@@ -287,7 +319,7 @@ actor FontScanEngine {
         let descriptorURL = CTFontDescriptorCopyAttribute(descriptor, kCTFontURLAttribute) as? URL
         let fontURL = CTFontCopyAttribute(font, kCTFontURLAttribute) as? URL
         let url = fallbackURL ?? descriptorURL ?? fontURL
-        let source = fontSource(url: url, manufacturer: manufacturer, managed: managed)
+        let source = fontSource(url: url, manufacturer: manufacturer, managed: managed, manifestNames: manifestNames)
         let languages = CTFontDescriptorCopyAttribute(descriptor, kCTFontLanguagesAttribute) as? [String] ?? []
         let supportsJapanese = languages.contains { $0 == "ja" || $0.hasPrefix("ja-") }
         // Only Japanese fonts can carry a Japanese name, so skip the name table for the rest.
@@ -340,13 +372,19 @@ actor FontScanEngine {
         CTFontDescriptorCopyAttribute(descriptor, key) as? String
     }
 
-    private func fontSource(url: URL?, manufacturer: String, managed: Bool) -> FontSource {
-        let searchable = "\(url?.path ?? "") \(manufacturer)".lowercased()
-        if searchable.contains("adobe") || searchable.contains("coresync") || searchable.contains("livetype") {
-            return .adobe
-        }
-        if searchable.contains("/library/fonts/morisawafonts/") {
-            return .morisawa
+    private func fontSource(
+        url: URL?,
+        manufacturer: String,
+        managed: Bool,
+        manifestNames: [String: Set<String>]
+    ) -> FontSource {
+        if let provider = FontProviderRegistry.match(
+            path: url?.path ?? "",
+            manufacturer: manufacturer,
+            manifestNames: manifestNames,
+            fileName: url?.lastPathComponent
+        ) {
+            return .provider(provider)
         }
         return managed ? .local : .system
     }

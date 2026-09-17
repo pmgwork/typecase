@@ -1,38 +1,40 @@
+import Darwin
 import Foundation
 
-nonisolated enum FontSource: String, Codable, CaseIterable, Identifiable, Sendable {
-    case system
-    case local
-    case adobe
-    case morisawa
+/// Where a font family comes from: the Mac itself, an added folder, or a
+/// subscription service that manages its own fonts.
+nonisolated struct FontSource: RawRepresentable, Hashable, Codable, Identifiable, Sendable {
+    let rawValue: String
+
+    static let system = FontSource(rawValue: "system")
+    static let local = FontSource(rawValue: "local")
+
+    static func provider(_ provider: FontProvider) -> FontSource {
+        FontSource(rawValue: provider.id)
+    }
 
     var id: String { rawValue }
 
+    /// The service this source represents, or nil for System and Local.
+    var provider: FontProvider? {
+        FontProviderRegistry.provider(withID: rawValue)
+    }
+
     var title: String {
-        switch self {
-        case .system: "System"
-        case .local: "Local"
-        case .adobe: "Adobe Fonts"
-        case .morisawa: "Morisawa Fonts"
-        }
+        if let provider { return provider.title }
+        return self == .local ? "Local" : "System"
     }
 
     var shortTitle: String {
-        switch self {
-        case .system: "OS"
-        case .local: "Local"
-        case .adobe: "Adobe"
-        case .morisawa: "Morisawa"
-        }
+        if let provider { return provider.shortTitle }
+        return self == .local ? "Local" : "OS"
     }
 
     var managementHint: String {
-        switch self {
-        case .system: "Installed on this Mac — deactivate it in Font Book"
-        case .local: "Added folder — use the radio button to activate or deactivate"
-        case .adobe: "Activate or deactivate in Adobe Creative Cloud"
-        case .morisawa: "Activate or deactivate in Morisawa Desktop Manager"
-        }
+        if let provider { return provider.managementHint }
+        return self == .local
+            ? "Added folder — use the radio button to activate or deactivate"
+            : "Installed on this Mac — deactivate it in Font Book"
     }
 }
 
@@ -68,6 +70,51 @@ nonisolated struct FontFace: Identifiable, Hashable, Sendable {
     var id: String { postScriptName }
 }
 
+/// An explicit activation state for one font file. Core Text registers font
+/// files as a unit, so activation is applied and undone per file.
+nonisolated struct FontActivationState: Sendable, Hashable {
+    let url: URL
+    let names: Set<String>
+    let enabled: Bool
+}
+
+/// One axis of a variable font with the range Core Text reports.
+nonisolated struct VariableFontAxis: Identifiable, Hashable, Sendable {
+    /// The four-character axis tag, such as `wght`.
+    let tag: UInt32
+    let name: String
+    let minimum: Double
+    let maximum: Double
+    let defaultValue: Double
+
+    var id: UInt32 { tag }
+    var tagString: String { VariationTag.string(from: tag) }
+}
+
+/// A variable font's axes and the coordinates of the instance in use.
+nonisolated struct VariableFontInfo: Sendable {
+    let axes: [VariableFontAxis]
+    let currentValues: [UInt32: Double]
+}
+
+/// Converts between Core Text's four-character axis tags and the strings used
+/// to persist them.
+nonisolated enum VariationTag {
+    static func string(from tag: UInt32) -> String {
+        let bytes = [
+            UInt8((tag >> 24) & 0xFF), UInt8((tag >> 16) & 0xFF),
+            UInt8((tag >> 8) & 0xFF), UInt8(tag & 0xFF),
+        ]
+        return String(bytes: bytes, encoding: .ascii) ?? String(tag)
+    }
+
+    static func tag(from string: String) -> UInt32? {
+        let scalars = Array(string.unicodeScalars)
+        guard scalars.count == 4 else { return nil }
+        return scalars.reduce(UInt32(0)) { ($0 << 8) | $1.value }
+    }
+}
+
 nonisolated struct FontFamily: Identifiable, Hashable, Sendable {
     let id: String
     let name: String
@@ -84,6 +131,16 @@ nonisolated struct FontFamily: Identifiable, Hashable, Sendable {
         return count > 0 && count < faces.count
     }
     var isManaged: Bool { faces.contains(where: \.isManaged) }
+    /// Whether the row's activation menu can enable every managed style.
+    var canActivate: Bool { isManaged && (!isEnabled || isPartiallyEnabled) }
+    /// Whether the row's activation menu can disable the managed styles.
+    var canDeactivate: Bool { isManaged && isEnabled }
+    /// The files the family's faces come from, in face order and without
+    /// repeats, so Finder and path actions name each file once.
+    var fileURLs: [URL] {
+        var seen: Set<URL> = []
+        return faces.compactMap(\.fileURL).filter { seen.insert($0.standardizedFileURL).inserted }
+    }
     var previewFace: FontFace? {
         faces.first(where: { $0.styleName.localizedCaseInsensitiveContains("regular") }) ?? faces.first
     }
@@ -96,35 +153,50 @@ nonisolated struct FontFolderNode: Identifiable, Hashable, Sendable {
     var id: URL { url }
 }
 
-enum LibrarySection: String, CaseIterable, Identifiable {
-    case all
-    case favorites
-    case system
-    case local
-    case adobe
-    case morisawa
+/// A sidebar destination for a source of fonts. Provider sections come from
+/// `FontProviderRegistry`, so the raw value is a provider id ("adobe"), which
+/// keeps persisted selections stable.
+nonisolated struct LibrarySection: Hashable, Identifiable, Sendable {
+    let rawValue: String
+
+    static let all = LibrarySection(rawValue: "all")
+    static let favorites = LibrarySection(rawValue: "favorites")
+    static let system = LibrarySection(rawValue: "system")
+    static let local = LibrarySection(rawValue: "local")
+
+    static func provider(_ provider: FontProvider) -> LibrarySection {
+        LibrarySection(rawValue: provider.id)
+    }
 
     var id: String { rawValue }
 
+    var provider: FontProvider? { FontProviderRegistry.provider(withID: rawValue) }
+
+    /// Whether this raw value names a section this build can show. A persisted
+    /// selection from an older or newer build must not become a blank row.
+    var isKnown: Bool {
+        provider != nil || [.all, .favorites, .system, .local].contains(self)
+    }
+
     var title: String {
+        if let provider { return provider.title }
         switch self {
-        case .all: "All Fonts"
-        case .favorites: "Favorites"
-        case .system: "System Fonts"
-        case .local: "Local Library"
-        case .adobe: "Adobe Fonts"
-        case .morisawa: "Morisawa Fonts"
+        case .all: return "All Fonts"
+        case .favorites: return "Favorites"
+        case .system: return "System Fonts"
+        case .local: return "Local Library"
+        default: return rawValue
         }
     }
 
-    var systemImage: String {
+    var icon: SourceIcon {
+        if let provider { return provider.icon }
         switch self {
-        case .all: "textformat"
-        case .favorites: "star"
-        case .system: "desktopcomputer"
-        case .local: "folder"
-        case .adobe: "cloud"
-        case .morisawa: "character.book.closed"
+        case .all: return .symbol("textformat")
+        case .favorites: return .symbol("star")
+        case .system: return .symbol("macbook")
+        case .local: return .symbol("folder")
+        default: return .symbol("textformat")
         }
     }
 }
@@ -134,19 +206,30 @@ enum SystemFontScope: String, CaseIterable, Hashable {
     case allUsers
     case system
 
+    /// The account's home directory. A sandboxed build reports its container here
+    /// ("…/Library/Containers/<bundle>/Data"), which would label the user scope
+    /// "Data" and file the fonts under the real ~/Library as System; the passwd
+    /// database still reports the home directory outside the container.
+    static let homeDirectory: URL = {
+        guard let passwd = getpwuid(getuid()), let directory = passwd.pointee.pw_dir else {
+            return FileManager.default.homeDirectoryForCurrentUser
+        }
+        return URL(fileURLWithPath: String(cString: directory), isDirectory: true)
+    }()
+
     var title: String {
         switch self {
-        case .user: FileManager.default.homeDirectoryForCurrentUser.lastPathComponent
+        case .user: Self.homeDirectory.lastPathComponent
         case .allUsers: "All Users"
         case .system: "System"
         }
     }
 
-    var systemImage: String {
+    var icon: SourceIcon {
         switch self {
-        case .user: "person.crop.circle"
-        case .allUsers: "person.2"
-        case .system: "desktopcomputer"
+        case .user: .symbol("person.crop.circle")
+        case .allUsers: .symbol("person.2")
+        case .system: .symbol("macbook")
         }
     }
 }
@@ -156,11 +239,11 @@ enum LibrarySelection: Hashable {
     case systemScope(SystemFontScope)
     case folder(URL)
 
-    var systemImage: String {
+    var icon: SourceIcon {
         switch self {
-        case .section(let section): section.systemImage
-        case .systemScope(let scope): scope.systemImage
-        case .folder: "folder"
+        case .section(let section): section.icon
+        case .systemScope(let scope): scope.icon
+        case .folder: .symbol("folder")
         }
     }
 }

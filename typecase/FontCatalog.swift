@@ -45,6 +45,7 @@ final class FontCatalog: ObservableObject {
     private var folderRecords: [FaceRecord] = []
     private var installedSeeds: [InstalledFaceSeed] = []
     private var scannedRoots: [URL] = []
+    private var metadataCache: [URL: [String: FontNameTable.Metadata]] = [:]
     private var lastDirectoryFingerprint: UInt64 = 0
     private var securityScopedURLs: [URL] = []
     private var refreshTask: Task<Void, Never>?
@@ -137,18 +138,20 @@ final class FontCatalog: ObservableObject {
     /// The sidebar requests this only for its selected row.
     func fontCount(for selection: LibrarySelection) -> Int {
         switch selection {
-        case .section(.all):
-            return families.count
-        case .section(.favorites):
-            return favorites.intersection(familyIDs).count
-        case .section(.system):
-            return systemFontCount
-        case .section(.local):
-            return families.lazy.filter { $0.source == .local }.count
-        case .section(.adobe):
-            return families.lazy.filter { $0.source == .adobe }.count
-        case .section(.morisawa):
-            return families.lazy.filter { $0.source == .morisawa }.count
+        case .section(let section):
+            if let provider = section.provider {
+                return families.lazy.filter { $0.source == .provider(provider) }.count
+            }
+            switch section {
+            case .favorites:
+                return favorites.intersection(familyIDs).count
+            case .system:
+                return systemFontCount
+            case .local:
+                return families.lazy.filter { $0.source == .local }.count
+            default:
+                return families.count
+            }
         case .systemScope(let scope):
             return familySystemScopes.values.lazy.filter { $0.contains(scope) }.count
         case .folder(let folder):
@@ -226,6 +229,25 @@ final class FontCatalog: ObservableObject {
 
     func revealFolder(_ url: URL) {
         NSWorkspace.shared.activateFileViewerSelecting([url])
+    }
+
+    /// Reveals the given font files in Finder, selecting them all.
+    func revealFiles(_ urls: [URL]) {
+        guard !urls.isEmpty else { return }
+        NSWorkspace.shared.activateFileViewerSelecting(urls)
+    }
+
+    /// Puts the given file paths on the general pasteboard, one per line.
+    func copyPaths(_ urls: [URL]) {
+        copyStrings(urls.map(\.path))
+    }
+
+    /// Puts the given strings on the general pasteboard, one per line.
+    func copyStrings(_ strings: [String]) {
+        guard !strings.isEmpty else { return }
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(strings.joined(separator: "\n"), forType: .string)
     }
 
     func removeFolder(_ url: URL) {
@@ -309,8 +331,9 @@ final class FontCatalog: ObservableObject {
 
         if !output.changedFiles.isEmpty {
             // Coverage is read from the font files themselves, so replaced
-            // files must not keep their cached character sets.
+            // files must not keep their cached character sets or metadata.
             let changedFiles = Set(output.changedFiles)
+            metadataCache.removeAll()
             Task { await coverage.invalidate(urls: changedFiles) }
         }
 
@@ -376,53 +399,127 @@ final class FontCatalog: ObservableObject {
 
     // MARK: - Activation
 
-    func setEnabled(_ enabled: Bool, family: FontFamily) {
-        guard family.isManaged else {
-            errorMessage = "Only fonts from an added local folder can be changed here."
-            return
-        }
-        setEnabled(enabled, faces: family.faces.filter(\.isManaged))
+    /// Enables or disables every managed file behind the given families,
+    /// registering undo when a manager is provided. The row's radio button and
+    /// the context menu, including a multi-selection, all come through here.
+    func setEnabled(_ enabled: Bool, families: [FontFamily], undoManager: UndoManager? = nil) {
+        let states = activationStates(for: families)
+            .filter { $0.enabled != enabled }
+            .map { FontActivationState(url: $0.url, names: $0.names, enabled: enabled) }
+        applyActivation(states, undoManager: undoManager)
     }
 
-    /// Toggles one style of a family. Core Text registers and unregisters whole
-    /// font files, so a face toggles together with every face that shares its
-    /// file — the members of a collection, for example.
-    func setEnabled(_ enabled: Bool, face: FontFace, in family: FontFamily) {
-        guard face.isManaged, let url = face.fileURL else {
-            errorMessage = "Only fonts from an added local folder can be changed here."
-            return
-        }
-        let fileFaces = family.faces.filter { $0.isManaged && $0.fileURL == url }
-        setEnabled(enabled, faces: fileFaces.isEmpty ? [face] : fileFaces)
+    /// Toggles the file shared by the given faces. Core Text registers and
+    /// unregisters whole font files, so a style toggles together with every
+    /// face that shares its file — the members of a collection, for example.
+    func setEnabled(
+        _ enabled: Bool,
+        faces: [FontFace],
+        in family: FontFamily,
+        undoManager: UndoManager? = nil
+    ) {
+        let urls = Set(faces.compactMap(\.fileURL?.standardizedFileURL))
+        let states = activationStates(for: [family])
+            .filter { urls.contains($0.url.standardizedFileURL) && $0.enabled != enabled }
+            .map { FontActivationState(url: $0.url, names: $0.names, enabled: enabled) }
+        applyActivation(states, undoManager: undoManager)
     }
 
-    private func setEnabled(_ enabled: Bool, faces: [FontFace]) {
-        let urls = Set(faces.compactMap(\.fileURL))
-        guard !urls.isEmpty else { return }
+    /// Applies explicit per-file activation states and registers an undo that
+    /// restores the previous state. Undoing re-registers the reverse, so Redo
+    /// works as well.
+    func applyActivation(_ states: [FontActivationState], undoManager: UndoManager? = nil) {
+        guard !states.isEmpty else { return }
+        let previous = activationStates(for: states.map(\.url))
+        performActivation(states)
+        guard let undoManager else { return }
+        undoManager.registerUndo(withTarget: self) { [weak undoManager] catalog in
+            catalog.applyActivation(previous, undoManager: undoManager)
+        }
+        undoManager.setActionName(Self.activationActionName(for: states))
+    }
+
+    /// The current activation state of every managed file behind the families.
+    func activationStates(for families: [FontFamily]) -> [FontActivationState] {
+        var states: [FontActivationState] = []
+        var seen: Set<URL> = []
+        for family in families {
+            for face in family.faces where face.isManaged {
+                guard let url = face.fileURL, seen.insert(url.standardizedFileURL).inserted else { continue }
+                states.append(activationState(for: url, in: family))
+            }
+        }
+        return states
+    }
+
+    /// The current activation state of the given files.
+    func activationStates(for urls: [URL]) -> [FontActivationState] {
+        var states: [FontActivationState] = []
+        var seen: Set<URL> = []
+        for url in urls {
+            guard seen.insert(url.standardizedFileURL).inserted,
+                  let match = managedFile(at: url) else { continue }
+            states.append(activationState(for: match.url, in: match.family))
+        }
+        return states
+    }
+
+    /// The most recent time a family's files were added to a folder, used by the
+    /// "Recently Added" list order. Installed fonts are not in the folder cache
+    /// and report 0, so they sort last.
+    func addedTime(for family: FontFamily) -> TimeInterval {
+        family.faces.compactMap { face -> TimeInterval? in
+            guard let url = face.fileURL, let file = fileCache[url] else { return nil }
+            return file.stamp.creation > 0 ? file.stamp.creation : file.stamp.modification
+        }.max() ?? 0
+    }
+
+    private func activationState(for url: URL, in family: FontFamily) -> FontActivationState {
         // The cached descriptor names cover every face of a file, which keeps the
         // recorded activation state in step with the file-level registration. The
         // family's faces are the fallback for a file the cache no longer holds.
-        let namesByURL = Dictionary(uniqueKeysWithValues: urls.map { url in
-            let names = fileCache[url]?.descriptorNames
-                ?? Set(faces.filter { $0.fileURL == url }.map(\.postScriptName))
-            return (url, names)
-        })
+        let faces = family.faces.filter { $0.fileURL?.standardizedFileURL == url.standardizedFileURL }
+        return FontActivationState(
+            url: url,
+            names: fileCache[url]?.descriptorNames ?? Set(faces.map(\.postScriptName)),
+            enabled: faces.contains(where: \.isInstalled)
+        )
+    }
 
+    /// The managed family and the stored URL behind a file.
+    private func managedFile(at url: URL) -> (family: FontFamily, url: URL)? {
+        for family in families {
+            for face in family.faces where face.isManaged {
+                guard let fileURL = face.fileURL,
+                      fileURL.standardizedFileURL == url.standardizedFileURL else { continue }
+                return (family, fileURL)
+            }
+        }
+        return nil
+    }
+
+    private func performActivation(_ states: [FontActivationState]) {
+        var enabledByURL: [URL: Bool] = [:]
+        var actions: [FontRegistrationAction] = []
+        for state in states where enabledByURL[state.url] == nil {
+            enabledByURL[state.url] = state.enabled
+            actions.append(FontRegistrationAction(
+                url: state.url,
+                names: state.names,
+                enabled: state.enabled,
+                skipIfAlreadyScoped: true
+            ))
+        }
+        guard !actions.isEmpty else { return }
+
+        let urls = Set(enabledByURL.keys)
         userRegistrationRevision += 1
         Task { [weak self] in
             guard let self else { return }
             await self.registrationQueue.enqueue { [weak self] in
                 guard let self else { return }
-                let actions = urls.map { url in
-                    FontRegistrationAction(
-                        url: url,
-                        names: namesByURL[url] ?? [],
-                        enabled: enabled,
-                        skipIfAlreadyScoped: true
-                    )
-                }
                 let outcomes = await self.registrar.synchronize(actions)
-                self.applyToggleOutcomes(outcomes, enabled: enabled)
+                self.applyToggleOutcomes(outcomes, enabledByURL: enabledByURL)
                 // Activation switches a face between the registered font and
                 // its file, which can resolve to different coverage data.
                 await self.coverage.invalidate(urls: urls)
@@ -432,9 +529,10 @@ final class FontCatalog: ObservableObject {
         }
     }
 
-    private func applyToggleOutcomes(_ outcomes: [FontRegistrationOutcome], enabled: Bool) {
+    private func applyToggleOutcomes(_ outcomes: [FontRegistrationOutcome], enabledByURL: [URL: Bool]) {
         var failures: [String] = []
         for outcome in outcomes {
+            let enabled = enabledByURL[outcome.url] ?? true
             if outcome.succeeded {
                 if enabled {
                     activeManagedNames.formUnion(outcome.names)
@@ -451,6 +549,12 @@ final class FontCatalog: ObservableObject {
         if !failures.isEmpty {
             errorMessage = failures.joined(separator: "\n")
         }
+    }
+
+    private static func activationActionName(for states: [FontActivationState]) -> String {
+        if states.allSatisfy(\.enabled) { return "Activate Fonts" }
+        if states.allSatisfy({ !$0.enabled }) { return "Deactivate Fonts" }
+        return "Change Font Activation"
     }
 
     // MARK: - Character coverage
@@ -472,6 +576,30 @@ final class FontCatalog: ObservableObject {
             fileURL: face.fileURL,
             text: text
         )
+    }
+
+    /// The preview face's variable axes, or nil for a static font.
+    func variableInfo(for family: FontFamily, size: CGFloat) -> VariableFontInfo? {
+        guard let face = family.previewFace else { return nil }
+        return FontResolver.shared.variableInfo(
+            postScriptName: face.postScriptName,
+            fileURL: face.fileURL,
+            size: size
+        )
+    }
+
+    /// A face's descriptive metadata, read from its font file off the main
+    /// thread and cached per file. Returns nil when the file cannot be read.
+    func fontMetadata(forPostScriptName name: String?, fileURL: URL?) async -> FontNameTable.Metadata? {
+        guard let fileURL else { return nil }
+        let key = (name ?? "").lowercased()
+        if let cached = metadataCache[fileURL]?[key] { return cached }
+        let metadata = await Task.detached(priority: .userInitiated) {
+            FontNameTable.metadata(forPostScriptName: name, inFontAt: fileURL)
+        }.value
+        guard let metadata else { return nil }
+        metadataCache[fileURL, default: [:]][key] = metadata
+        return metadata
     }
 
     // MARK: - Indexes
@@ -503,7 +631,7 @@ final class FontCatalog: ObservableObject {
 
     private func rebuildIndexes() {
         let roots = folders.map(\.standardizedFileURL)
-        let home = FileManager.default.homeDirectoryForCurrentUser
+        let home = SystemFontScope.homeDirectory
         let allUsers = URL(fileURLWithPath: "/Library", isDirectory: true)
 
         var byID: [FontFamily.ID: FontFamily] = [:]
@@ -625,10 +753,8 @@ final class FontCatalog: ObservableObject {
                 return $0.weight < $1.weight
             }
             let source: FontSource
-            if records.contains(where: { $0.source == .adobe }) {
-                source = .adobe
-            } else if records.contains(where: { $0.source == .morisawa }) {
-                source = .morisawa
+            if let provider = records.compactMap(\.source.provider).min(by: { $0.order < $1.order }) {
+                source = .provider(provider)
             } else if records.contains(where: { $0.source == .local }) {
                 source = .local
             } else {

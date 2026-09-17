@@ -18,6 +18,9 @@ struct ContentView: View {
             FontLibraryView(catalog: catalog, viewState: viewState)
         }
         .navigationTitle("TypeCase")
+        // Preserve the principal region so trailing controls stay right-aligned.
+        .toolbarTitleDisplayMode(.inline)
+        .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
         .inspector(isPresented: $inspectorVisible) {
             FontInspector(catalog: catalog, viewState: viewState, comparisonVisible: $comparisonVisible)
                 .inspectorColumnWidth(min: 260, ideal: 320, max: 400)
@@ -26,7 +29,28 @@ struct ContentView: View {
         // Otherwise AppKit changes the window frame when a split-view column is restored.
         .frame(minWidth: 860, minHeight: 520)
         .toolbar {
-            ToolbarItemGroup {
+            ToolbarItem(placement: .principal) {
+                Color.clear.frame(width: 1, height: 1)
+                    .accessibilityHidden(true)
+            }
+            .sharedBackgroundVisibility(.hidden)
+            // Keep the size control separate from the button groups so it reads
+            // as its own control instead of merging into their background.
+            ToolbarItem(placement: .navigation) {
+                PreviewSizeControl(size: $settings.previewSize)
+            }
+            .sharedBackgroundVisibility(.hidden)
+
+            // The specimen colors keep their own item so the swatch is not
+            // drawn inside the button group's shared background.
+            ToolbarItem(placement: .navigation) {
+                PreviewColorsControl()
+            }
+            .sharedBackgroundVisibility(.hidden)
+
+            // On macOS, confirmationAction is the trailing toolbar region;
+            // automatic and primaryAction items can remain on the leading side.
+            ToolbarItem(placement: .confirmationAction) {
                 Menu {
                     Picker("Category", selection: $viewState.category) {
                         Text("All Categories").tag(FontCategory?.none)
@@ -40,40 +64,37 @@ struct ContentView: View {
                             Text(filter.title).tag(filter)
                         }
                     }
+                    Divider()
+                    Picker("Sort By", selection: $viewState.sortOrder) {
+                        ForEach(LibrarySortOrder.allCases) { order in
+                            Text(order.title).tag(order)
+                        }
+                    }
                 } label: {
                     Label("Filter", systemImage: "line.3.horizontal.decrease.circle")
                 }
-                .help("Filter by category and status")
+                .help("Filter by category and status, and choose the list order")
             }
 
-            // Keep the size control separate from the button groups so it reads
-            // as its own control instead of merging into their background.
-            ToolbarItem {
-                PreviewSizeControl(size: $settings.previewSize)
-            }
-            .sharedBackgroundVisibility(.hidden)
-
-            ToolbarItemGroup {
-                Button {
-                    comparisonVisible = true
-                } label: {
-                    Label(compareTitle, systemImage: "rectangle.split.2x1")
-                }
-                .disabled(viewState.selection.count < 2)
-                .help("Compare the selected fonts side by side")
-
+            ToolbarItem(placement: .confirmationAction) {
                 Button {
                     inspectorVisible.toggle()
                 } label: {
-                    Label("Inspector", systemImage: "sidebar.right")
+                    Label("Inspector", systemImage: "info.circle")
                 }
                 .help("Show or hide the inspector")
             }
 
-            ToolbarItem {
+            ToolbarSpacer(.fixed, placement: .confirmationAction)
+
+            ToolbarItem(placement: .confirmationAction) {
                 ToolbarSearchField(text: $viewState.searchText)
                     .frame(width: 220)
+                    .padding(.horizontal, 8)
+                    .frame(height: 36)
+                    .glassEffect(.regular, in: .capsule)
             }
+            .sharedBackgroundVisibility(.hidden)
         }
         .sheet(isPresented: $comparisonVisible) {
             ComparisonView(viewState: viewState, families: viewState.selectedFamilies(catalog: catalog))
@@ -88,7 +109,9 @@ struct ContentView: View {
             viewState.restoreStartupState(from: settings)
             viewState.reconcile(with: catalog)
         }
-        .background(WindowAccessor { window = $0 })
+        .background(WindowAccessor {
+            window = $0
+        })
         .onChange(of: catalog.familiesRevision) { _, _ in
             viewState.reconcile(with: catalog)
         }
@@ -107,14 +130,11 @@ struct ContentView: View {
             Text(catalog.errorMessage ?? "")
         }
     }
-
-    private var compareTitle: String {
-        viewState.selection.count > 1 ? "Compare \(viewState.selection.count)" : "Compare"
-    }
 }
 
-/// A compact native search field. SwiftUI's toolbar `.searchable` expands to
-/// consume all flexible space on macOS, which is too wide for this library.
+/// A compact native search field placed with the leading toolbar controls.
+/// SwiftUI's toolbar `.searchable` consumes the toolbar's flexible space, which
+/// is too wide for this library and sits at the trailing edge.
 private struct ToolbarSearchField: NSViewRepresentable {
     @Binding var text: String
 
@@ -188,6 +208,93 @@ private struct PreviewSizeControl: View {
     }
 }
 
+/// The copy actions shared by the font row's context menu and the inspector:
+/// the names a designer needs when using the font somewhere else.
+private struct FontNameCopyItems: View {
+    @EnvironmentObject private var catalog: FontCatalog
+    let family: FontFamily
+
+    var body: some View {
+        Button("Family Name") {
+            catalog.copyStrings([family.name])
+        }
+        Button("English Name") {
+            catalog.copyStrings([family.localizedName])
+        }
+        Button("PostScript Names") {
+            catalog.copyStrings(family.faces.map(\.postScriptName))
+        }
+        Button("CSS font-family") {
+            catalog.copyStrings(["font-family: \"\(family.name)\";"])
+        }
+    }
+}
+
+/// The specimen colors in the toolbar: the left half of the swatch is the
+/// background, the right half the text color. Each half opens a color popover.
+private struct PreviewColorsControl: View {
+    @EnvironmentObject private var settings: AppSettings
+    var body: some View {
+        swatch
+            .overlay {
+                HStack(spacing: 0) {
+                    SpecimenColorPicker(color: $settings.previewBackgroundColor,
+                                        fallback: Color(nsColor: .windowBackgroundColor), title: "Background Color") {
+                        Color.clear.frame(width: 27, height: 36).contentShape(.rect)
+                    }
+                    SpecimenColorPicker(color: $settings.previewTextColor,
+                                        fallback: Color(nsColor: .labelColor), title: "Text Color") {
+                        Color.clear.frame(width: 27, height: 36).contentShape(.rect)
+                    }
+                }
+            }
+            .contextMenu {
+                Button("System") { settings.setPreviewColors(background: nil, text: nil) }
+                Button("Light") { settings.setPreviewColors(background: .white, text: .black) }
+                Button("Dark") {
+                    settings.setPreviewColors(
+                        background: Color(red: 0.11, green: 0.11, blue: 0.12), text: .white
+                    )
+                }
+            }
+    }
+
+    /// Shows the system colors while the specimens follow the appearance.
+    private var backgroundSwatch: Color {
+        settings.previewBackgroundColor ?? Color(nsColor: .windowBackgroundColor)
+    }
+
+    private var textSwatch: Color {
+        settings.previewTextColor ?? Color(nsColor: .labelColor)
+    }
+
+    private var swatch: some View {
+        splitSwatch
+            .frame(width: 54, height: 36)
+            .contentShape(.capsule)
+            .glassEffect(.regular.interactive(), in: .capsule)
+    }
+
+    /// The specimens' colors as a single rounded swatch: the background on the
+    /// left, the text color on the right.
+    private var splitSwatch: some View {
+        HStack(spacing: 0) {
+            Rectangle()
+                .fill(backgroundSwatch)
+            Rectangle()
+                .fill(textSwatch)
+        }
+        .frame(width: 34, height: 18)
+        .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 5, style: .continuous)
+                .strokeBorder(Color.primary.opacity(0.12), lineWidth: 0.5)
+        }
+        .contentShape(.rect)
+    }
+
+}
+
 private struct Sidebar: View {
     @ObservedObject var catalog: FontCatalog
     @ObservedObject var viewState: LibraryViewState
@@ -195,13 +302,11 @@ private struct Sidebar: View {
     @AppStorage("systemScopesExpanded") private var systemScopesExpanded = true
     @State private var isDropTargeted = false
 
-    /// The source sections the settings leave visible.
-    private var sourceSections: [LibrarySection] {
-        var sections: [LibrarySection] = []
-        if settings.showLocalSection { sections.append(.local) }
-        if settings.showAdobeSection { sections.append(.adobe) }
-        if settings.showMorisawaSection { sections.append(.morisawa) }
-        return sections
+    /// The font service sections the settings leave visible.
+    private var providerSections: [LibrarySection] {
+        FontProviderRegistry.all
+            .filter { settings.isProviderSectionVisible($0.id) }
+            .map { .provider($0) }
     }
 
     var body: some View {
@@ -210,9 +315,17 @@ private struct Sidebar: View {
                 if settings.showAllSection { sectionRow(.all) }
                 if settings.showFavoritesSection { sectionRow(.favorites) }
                 if settings.showSystemSection { systemGroup }
+                if settings.showLocalSection { sectionRow(.local) }
+            }
 
-                ForEach(sourceSections) { section in
-                    sectionRow(section)
+            if !providerSections.isEmpty {
+                Section {
+                    ForEach(providerSections) { section in
+                        sectionRow(section)
+                    }
+                } header: {
+                    Text("Providers")
+                        .foregroundStyle(Color(nsColor: .secondaryLabelColor))
                 }
             }
 
@@ -323,7 +436,7 @@ private struct Sidebar: View {
 
     private func sectionRow(_ section: LibrarySection) -> some View {
         let selection = LibrarySelection.section(section)
-        return SidebarLabel(title: section.title, systemImage: section.systemImage)
+        return SidebarLabel(title: section.title, icon: section.icon)
             .background(TableRowEmphasisConfigurator())
             .badge(selectedCount(for: selection))
             .tag(selection)
@@ -337,7 +450,7 @@ private struct Sidebar: View {
                 // treated as a nested sidebar row and rendered with a smaller font.
                 HStack(spacing: 0) {
                     Color.clear.frame(width: 20, height: 1)
-                    SidebarLabel(title: scope.title, systemImage: scope.systemImage)
+                    SidebarLabel(title: scope.title, icon: scope.icon)
                 }
                 .background(TableRowEmphasisConfigurator())
                 .badge(selectedCount(for: .systemScope(scope)))
@@ -345,7 +458,7 @@ private struct Sidebar: View {
             }
         } label: {
             HStack(spacing: 6) {
-                SidebarLabel(title: LibrarySection.system.title, systemImage: LibrarySection.system.systemImage)
+                SidebarLabel(title: LibrarySection.system.title, icon: LibrarySection.system.icon)
                 Spacer(minLength: 6)
                 if viewState.librarySelection == .section(.system) {
                     Text("\(catalog.fontCount(for: .section(.system)))")
@@ -369,6 +482,7 @@ private struct FontLibraryView: View {
     @ObservedObject var catalog: FontCatalog
     @ObservedObject var viewState: LibraryViewState
     @EnvironmentObject private var settings: AppSettings
+    @Environment(\.undoManager) private var environmentUndoManager
     @FocusState private var listFocused: Bool
     @State private var expandedFamilyID: FontFamily.ID?
 
@@ -385,20 +499,55 @@ private struct FontLibraryView: View {
                             isExpanded: expandedFamilyID == family.id,
                             previewText: settings.effectivePreviewText(for: family, entered: viewState.previewText),
                             previewSize: settings.previewSize,
+                            previewTextColor: settings.previewTextColor,
+                            isSelected: viewState.selection.contains(family.id),
+                            selectionTint: selectionTint,
                             isFavorite: catalog.isFavorite(family),
+                            variations: settings.variationValues(for: family.faces),
                             toggleExpanded: { toggleExpanded(family) },
                             toggleFavorite: { catalog.toggleFavorite(family) },
                             toggleEnabled: {
-                                catalog.setEnabled(!family.isEnabled || family.isPartiallyEnabled, family: family)
+                                setEnabled(!family.isEnabled || family.isPartiallyEnabled, families: [family])
                             },
                             toggleFaceEnabled: { face in
-                                catalog.setEnabled(!face.isInstalled, face: face, in: family)
+                                setEnabled(!face.isInstalled, faces: [face], in: family)
                             }
                         )
                             .equatable()
                             .tag(family.id)
+                            .contextMenu {
+                                let targets = activationTargets(for: family)
+                                Button(activationTitle("Activate", count: targets.count)) {
+                                    setEnabled(true, families: targets)
+                                }
+                                .disabled(!targets.contains(where: \.canActivate))
+
+                                Button(activationTitle("Deactivate", count: targets.count)) {
+                                    setEnabled(false, families: targets)
+                                }
+                                .disabled(!targets.contains(where: \.canDeactivate))
+
+                                Divider()
+
+                                Button("Show in Finder") {
+                                    catalog.revealFiles(family.fileURLs)
+                                }
+                                .disabled(family.fileURLs.isEmpty)
+
+                                Button("Copy Path") {
+                                    catalog.copyPaths(family.fileURLs)
+                                }
+                                .disabled(family.fileURLs.isEmpty)
+
+                                Divider()
+
+                                Menu("Copy Name") {
+                                    FontNameCopyItems(family: family)
+                                }
+                            }
                     }
                 }
+                .scrollContentBackground(.hidden)
                 .listStyle(.inset)
                 .environment(\.controlActiveState, .key)
                 .focused($listFocused)
@@ -420,9 +569,9 @@ private struct FontLibraryView: View {
                             // the same gradient-fade approach the system uses for bars.
                             LinearGradient(
                                 stops: [
-                                    .init(color: Color(nsColor: .windowBackgroundColor).opacity(0), location: 0),
-                                    .init(color: Color(nsColor: .windowBackgroundColor).opacity(0.9), location: 0.45),
-                                    .init(color: Color(nsColor: .windowBackgroundColor).opacity(0.9), location: 1),
+                                    .init(color: canvasColor.opacity(0), location: 0),
+                                    .init(color: canvasColor.opacity(0.9), location: 0.45),
+                                    .init(color: canvasColor.opacity(0.9), location: 1),
                                 ],
                                 startPoint: .top,
                                 endPoint: .bottom
@@ -432,12 +581,29 @@ private struct FontLibraryView: View {
                 }
             }
         }
+        // The chosen background paints the whole font list area, so specimens
+        // sit directly on it. The inspector keeps the system surface.
+        .background(canvasColor)
         // Coverage depends on the preview text and the family list, so the check
         // is requested here rather than from inside the cached filter.
         .task(id: viewState.coverageRequest(catalog: catalog)) {
             viewState.updateCoverage(catalog: catalog)
         }
         .navigationSplitViewColumnWidth(min: 320, ideal: 640)
+    }
+
+    /// The specimen canvas color: the chosen background, or the window color
+    /// while the specimens follow the system appearance.
+    private var canvasColor: Color {
+        settings.previewBackgroundColor ?? Color(nsColor: .windowBackgroundColor)
+    }
+
+    /// The veil drawn over a selected row while the canvas has a custom color.
+    /// It takes the specimen text color so the selection stays readable and
+    /// belongs to the chosen palette; `nil` keeps the system accent selection.
+    private var selectionTint: Color? {
+        guard settings.previewBackgroundColor != nil else { return nil }
+        return settings.previewTextColor ?? Color(nsColor: .labelColor)
     }
 
 
@@ -465,7 +631,14 @@ private struct FontLibraryView: View {
                 }
             } else if output.sectionIsEmpty {
                 ContentUnavailableView {
-                    Label(emptySectionTitle, systemImage: viewState.librarySelection.systemImage)
+                    Label {
+                        Text(emptySectionTitle)
+                    } icon: {
+                        SourceIconView(
+                            icon: viewState.librarySelection.icon,
+                            assetSize: 48
+                        )
+                    }
                 } description: {
                     Text(emptySectionMessage)
                 } actions: {
@@ -517,26 +690,57 @@ private struct FontLibraryView: View {
 
     private var emptySectionTitle: String {
         switch viewState.librarySelection {
-        case .section(.favorites): "No favorites yet"
-        case .section(.local): "No local fonts"
-        case .section(.adobe): "No Adobe Fonts"
-        case .section(.morisawa): "No Morisawa Fonts"
-        case .folder(let folder): "No fonts in \(folder.lastPathComponent)"
-        case .systemScope(let scope): "No fonts for \(scope.title)"
-        case .section(.all), .section(.system): "No fonts"
+        case .section(let section):
+            if let provider = section.provider { return "No \(provider.title)" }
+            switch section {
+            case .favorites: return "No favorites yet"
+            case .local: return "No local fonts"
+            default: return "No fonts"
+            }
+        case .folder(let folder): return "No fonts in \(folder.lastPathComponent)"
+        case .systemScope(let scope): return "No fonts for \(scope.title)"
         }
     }
 
     private var emptySectionMessage: String {
         switch viewState.librarySelection {
-        case .section(.favorites): "Select a font and click the star to keep it here."
-        case .section(.local): "Add a folder that contains font files to browse them without installing."
-        case .section(.adobe): "Fonts activated in Adobe Creative Cloud appear here."
-        case .section(.morisawa): "Fonts activated in Morisawa Desktop Manager appear here."
-        case .folder: "This folder does not contain any supported font files."
-        case .systemScope: "No fonts were found in this installation scope."
-        case .section(.all), .section(.system): "Change the search text or filters."
+        case .section(let section):
+            if let provider = section.provider { return provider.emptyMessage }
+            switch section {
+            case .favorites: return "Select a font and click the star to keep it here."
+            case .local: return "Add a folder that contains font files to browse them without installing."
+            default: return "Change the search text or filters."
+            }
+        case .folder: return "This folder does not contain any supported font files."
+        case .systemScope: return "No fonts were found in this installation scope."
         }
+    }
+
+    /// The window's undo manager, falling back to the key window while a
+    /// context menu action is running.
+    private var activeUndoManager: UndoManager? {
+        environmentUndoManager ?? NSApp.keyWindow?.undoManager
+    }
+
+    /// Enables or disables the managed files behind the families and registers
+    /// the change with the window's undo manager.
+    private func setEnabled(_ enabled: Bool, families: [FontFamily]) {
+        catalog.setEnabled(enabled, families: families, undoManager: activeUndoManager)
+    }
+
+    private func setEnabled(_ enabled: Bool, faces: [FontFace], in family: FontFamily) {
+        catalog.setEnabled(enabled, faces: faces, in: family, undoManager: activeUndoManager)
+    }
+
+    /// Activation acts on the whole multi-selection when the clicked row is part
+    /// of it, and on the clicked family otherwise.
+    private func activationTargets(for family: FontFamily) -> [FontFamily] {
+        guard viewState.selection.contains(family.id), viewState.selection.count > 1 else { return [family] }
+        return viewState.selectedFamilies(catalog: catalog)
+    }
+
+    private func activationTitle(_ action: String, count: Int) -> String {
+        count > 1 ? "\(action) \(count) Fonts" : action
     }
 
     private func toggleExpanded(_ family: FontFamily) {
@@ -554,7 +758,13 @@ private struct FontFamilyRow: View, Equatable {
     let isExpanded: Bool
     let previewText: String
     let previewSize: Double
+    let previewTextColor: Color?
+    let isSelected: Bool
+    /// The selection veil while a custom canvas color paints the list; `nil`
+    /// keeps the system accent selection.
+    let selectionTint: Color?
     let isFavorite: Bool
+    let variations: [FontFace.ID: [UInt32: Double]]
     let toggleExpanded: () -> Void
     let toggleFavorite: () -> Void
     let toggleEnabled: () -> Void
@@ -565,7 +775,11 @@ private struct FontFamilyRow: View, Equatable {
             && lhs.isExpanded == rhs.isExpanded
             && lhs.previewText == rhs.previewText
             && lhs.previewSize == rhs.previewSize
+            && lhs.previewTextColor == rhs.previewTextColor
+            && lhs.isSelected == rhs.isSelected
+            && lhs.selectionTint == rhs.selectionTint
             && lhs.isFavorite == rhs.isFavorite
+            && lhs.variations == rhs.variations
     }
 
     var body: some View {
@@ -621,7 +835,9 @@ private struct FontFamilyRow: View, Equatable {
                                 text: previewText,
                                 postScriptName: face.postScriptName,
                                 fileURL: face.fileURL,
-                                size: previewSize
+                                size: previewSize,
+                                variations: variations[face.id],
+                                textColor: previewTextColor
                             )
                         }
                     }
@@ -631,12 +847,25 @@ private struct FontFamilyRow: View, Equatable {
                     text: previewText,
                     postScriptName: family.previewFace?.postScriptName,
                     fileURL: family.previewFace?.fileURL,
-                    size: previewSize
+                    size: previewSize,
+                    variations: family.previewFace.flatMap { variations[$0.id] },
+                    textColor: previewTextColor
                 )
             }
         }
         .padding(.vertical, 6)
-        .background(TableRowEmphasisConfigurator(isEmphasized: true))
+        .background {
+            if isSelected, let selectionTint {
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(selectionTint.opacity(0.22))
+            }
+        }
+        // The system's accent selection is suppressed while the row draws its
+        // own veil, otherwise the blue fights the custom canvas color.
+        .background(TableRowEmphasisConfigurator(
+            isEmphasized: selectionTint == nil,
+            hidesSelectionHighlight: selectionTint != nil
+        ))
         .contentShape(.rect)
         // Let the List select on the first click without waiting for the
         // double-click recognizer to fail.
@@ -688,29 +917,35 @@ private struct FontFamilyRow: View, Equatable {
 }
 
 /// Uses AppKit's native selection paint: gray in the sidebar, emphasized in
-/// the font list. No custom backgrounds or selection geometry are drawn.
+/// the font list. While a custom canvas color is set the system paint is
+/// suppressed, so the row's own veil is the only selection mark.
 private struct TableRowEmphasisConfigurator: NSViewRepresentable {
     var isEmphasized = false
+    var hidesSelectionHighlight = false
 
     func makeNSView(context: Context) -> Probe {
         let view = Probe()
         view.isEmphasized = isEmphasized
+        view.hidesSelectionHighlight = hidesSelectionHighlight
         return view
     }
 
     func updateNSView(_ view: Probe, context: Context) {
         view.isEmphasized = isEmphasized
+        view.hidesSelectionHighlight = hidesSelectionHighlight
         view.attach()
     }
 
     static func dismantleNSView(_ view: Probe, coordinator: ()) {
-        view.observation = nil
+        view.observations = []
     }
 
     final class Probe: NSView {
         var isEmphasized = false
+        var hidesSelectionHighlight = false
         weak var observedRow: NSTableRowView?
-        var observation: NSKeyValueObservation?
+        var observations: [NSKeyValueObservation] = []
+        private var systemSelectionStyle: NSTableView.SelectionHighlightStyle?
 
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
@@ -726,29 +961,37 @@ private struct TableRowEmphasisConfigurator: NSViewRepresentable {
             var ancestor = superview
             while let current = ancestor {
                 if let row = current as? NSTableRowView {
-                    guard observedRow !== row else {
-                        row.isEmphasized = isEmphasized
-                        return
-                    }
-                    observation = nil
-                    observedRow = row
-                    // Observe the actual property rather than only selection
-                    // notifications: AppKit also updates it on focus changes.
-                    observation = row.observe(\.isEmphasized, options: [.new]) { [weak self] row, _ in
-                        MainActor.assumeIsolated {
-                            guard let self else { return }
-                            if row.isEmphasized != self.isEmphasized {
-                                row.isEmphasized = self.isEmphasized
+                    if observedRow !== row {
+                        observations = []
+                        observedRow = row
+                        systemSelectionStyle = nil
+                        // Observe the actual properties rather than only selection
+                        // notifications: AppKit also updates them on focus changes
+                        // and may restore its own highlight when the row changes.
+                        observations = [\.isEmphasized, \.isSelected].map { keyPath in
+                            row.observe(keyPath, options: [.new]) { [weak self] row, _ in
+                                MainActor.assumeIsolated { self?.apply(to: row) }
                             }
                         }
                     }
-                    row.isEmphasized = isEmphasized
+                    apply(to: row)
                     return
                 }
                 ancestor = current.superview
             }
-            observation = nil
+            observations = []
             observedRow = nil
+        }
+
+        private func apply(to row: NSTableRowView) {
+            if hidesSelectionHighlight {
+                if systemSelectionStyle == nil { systemSelectionStyle = row.selectionHighlightStyle }
+                if row.selectionHighlightStyle != .none { row.selectionHighlightStyle = .none }
+            } else if let style = systemSelectionStyle, row.selectionHighlightStyle != style {
+                row.selectionHighlightStyle = style
+                systemSelectionStyle = nil
+            }
+            if row.isEmphasized != isEmphasized { row.isEmphasized = isEmphasized }
         }
     }
 }
@@ -775,31 +1018,61 @@ private struct FontInspector: View {
     @Binding var comparisonVisible: Bool
     @State private var newTag = ""
     @State private var missingCharacters: [String] = []
+    @State private var variableAxes: VariableAxesState?
+    @State private var metadata: FontNameTable.Metadata?
+
+    /// The size of the inspector's specimen; also the point size the variable
+    /// axis values are read at, so the sliders match what the specimen shows.
+    private static let previewSize: CGFloat = 40
+
+    private struct VariableAxesState {
+        let faceID: FontFace.ID
+        let info: VariableFontInfo
+    }
 
     var body: some View {
         if let family = catalog.family(for: viewState.selection) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(family.name)
-                            .font(.title3.weight(.semibold))
-                            .textSelection(.enabled)
-                        if family.localizedName != family.name {
-                            Text(family.localizedName)
+                    HStack(alignment: .top, spacing: 8) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(family.name)
+                                .font(.title3.weight(.semibold))
+                                .textSelection(.enabled)
+                            if family.localizedName != family.name {
+                                Text(family.localizedName)
+                                    .foregroundStyle(.secondary)
+                                    .textSelection(.enabled)
+                            }
+                            Text(family.manufacturer)
                                 .foregroundStyle(.secondary)
                                 .textSelection(.enabled)
                         }
-                        Text(family.manufacturer)
-                            .foregroundStyle(.secondary)
-                            .textSelection(.enabled)
+
+                        Spacer(minLength: 8)
+
+                        Menu {
+                            FontNameCopyItems(family: family)
+                        } label: {
+                            Label("Copy Name", systemImage: "doc.on.doc")
+                                .labelStyle(.iconOnly)
+                        }
+                        .menuStyle(.button)
+                        .buttonStyle(.borderless)
+                        .menuIndicator(.hidden)
+                        .fixedSize()
+                        .help("Copy the font names")
                     }
 
                     FontPreviewText(
                         text: previewText(for: family),
                         postScriptName: family.previewFace?.postScriptName,
                         fileURL: family.previewFace?.fileURL,
-                        size: 40,
-                        lines: 2
+                        size: Self.previewSize,
+                        lines: 2,
+                        variations: settings.variationValues(for: family.previewFace),
+                        backgroundColor: settings.previewBackgroundColor,
+                        textColor: settings.previewTextColor
                     )
 
                     if !missingCharacters.isEmpty {
@@ -818,6 +1091,17 @@ private struct FontInspector: View {
                             }
                             .labelsHidden()
                         }
+                    }
+
+                    if let metadata {
+                        metadataSection(metadata)
+                    }
+
+                    if let face = family.previewFace,
+                       let variableAxes,
+                       variableAxes.faceID == face.id,
+                       !variableAxes.info.axes.isEmpty {
+                        variableAxesSection(face: face, info: variableAxes.info)
                     }
 
                     if !family.isManaged {
@@ -841,6 +1125,22 @@ private struct FontInspector: View {
                 guard !Task.isCancelled else { return }
                 missingCharacters = missing
             }
+            .task(id: family.id) {
+                let face = family.previewFace
+                let info = catalog.variableInfo(for: family, size: Self.previewSize)
+                variableAxes = face.flatMap { face in
+                    info.map { VariableAxesState(faceID: face.id, info: $0) }
+                }
+                // Clear while reading so the metadata never describes the
+                // previously selected font.
+                metadata = nil
+                let loaded = await catalog.fontMetadata(
+                    forPostScriptName: face?.postScriptName,
+                    fileURL: face?.fileURL
+                )
+                guard !Task.isCancelled else { return }
+                metadata = loaded
+            }
         } else if viewState.selection.count > 1 {
             ContentUnavailableView {
                 Label("\(viewState.selection.count) fonts selected", systemImage: "rectangle.split.2x1")
@@ -859,6 +1159,107 @@ private struct FontInspector: View {
             get: { family.category },
             set: { catalog.setCategory($0, for: family) }
         )
+    }
+
+    // MARK: - File metadata
+
+    /// The details read from the font file: version, glyph count, embedding
+    /// permission, designer, and the legal notices. Fields the file does not
+    /// carry are omitted.
+    @ViewBuilder
+    private func metadataSection(_ metadata: FontNameTable.Metadata) -> some View {
+        let hasSummary = metadata.versionNumber != nil
+            || metadata.glyphCount != nil
+            || metadata.embedding != nil
+            || metadata.designer != nil
+        if hasSummary {
+            Group {
+                if let version = metadata.versionNumber {
+                    LabeledContent("Version", value: version)
+                }
+                if let glyphCount = metadata.glyphCount {
+                    LabeledContent("Glyphs", value: glyphCount.formatted())
+                }
+                if let embedding = metadata.embedding {
+                    LabeledContent("Embedding", value: embedding.title)
+                }
+                if let designer = metadata.designer {
+                    LabeledContent("Designer", value: designer)
+                }
+            }
+        }
+        if let copyright = metadata.copyright {
+            metadataNote("Copyright", copyright)
+        }
+        if let license = metadata.license, license != metadata.copyright {
+            metadataNote("License", license)
+        }
+    }
+
+    private func metadataNote(_ title: String, _ text: String) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+            Text(text)
+                .font(.callout)
+                .textSelection(.enabled)
+                .lineLimit(4)
+                .help(text)
+        }
+    }
+
+    // MARK: - Variable axes
+
+    private func variableAxesSection(face: FontFace, info: VariableFontInfo) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("Variable Axes")
+                    .font(.headline)
+                Spacer(minLength: 8)
+                Button("Reset") {
+                    settings.resetVariations(for: face.postScriptName)
+                }
+                .controlSize(.small)
+                .disabled(settings.variationValues(for: face.postScriptName).isEmpty)
+                .help("Return to the style's own axis values")
+            }
+            ForEach(info.axes) { axis in
+                let binding = axisBinding(axis, face: face, info: info)
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack {
+                        Text(axis.name)
+                            .lineLimit(1)
+                        Spacer(minLength: 8)
+                        Text(axisValueText(binding.wrappedValue))
+                            .monospacedDigit()
+                            .foregroundStyle(.secondary)
+                    }
+                    .font(.callout)
+                    Slider(value: binding, in: axis.minimum...axis.maximum)
+                        .controlSize(.small)
+                        .labelsHidden()
+                        .accessibilityLabel(axis.name)
+                }
+            }
+        }
+    }
+
+    /// The slider value: the stored adjustment, the instance's own coordinate,
+    /// or the axis default.
+    private func axisBinding(_ axis: VariableFontAxis, face: FontFace, info: VariableFontInfo) -> Binding<Double> {
+        Binding(
+            get: {
+                settings.variationValues(for: face.postScriptName)[axis.tag]
+                    ?? info.currentValues[axis.tag]
+                    ?? axis.defaultValue
+            },
+            set: { settings.setVariation($0, tag: axis.tag, for: face.postScriptName) }
+        )
+    }
+
+    private func axisValueText(_ value: Double) -> String {
+        value.rounded() == value ? String(Int(value)) : String(format: "%.1f", value)
     }
 
     private func tagsSection(for family: FontFamily) -> some View {
@@ -985,7 +1386,10 @@ private struct ComparisonView: View {
                                 postScriptName: family.previewFace?.postScriptName,
                                 fileURL: family.previewFace?.fileURL,
                                 size: settings.previewSize,
-                                lines: 2
+                                lines: 2,
+                                variations: settings.variationValues(for: family.previewFace),
+                                backgroundColor: settings.previewBackgroundColor,
+                                textColor: settings.previewTextColor
                             )
                         }
                         .padding(.vertical, 8)
@@ -1008,14 +1412,40 @@ private struct ComparisonView: View {
 private struct WindowAccessor: NSViewRepresentable {
     let onWindow: (NSWindow?) -> Void
 
-    func makeNSView(context: Context) -> NSView {
-        let view = NSView()
+    func makeNSView(context: Context) -> Probe {
+        let view = Probe()
         DispatchQueue.main.async { onWindow(view.window) }
         return view
     }
 
-    func updateNSView(_ nsView: NSView, context: Context) {
+    func updateNSView(_ nsView: Probe, context: Context) {
+        nsView.hideTitle()
         DispatchQueue.main.async { onWindow(nsView.window) }
+    }
+
+    final class Probe: NSView {
+        private var titleObservation: NSKeyValueObservation?
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            titleObservation = nil
+            hideTitle()
+            titleObservation = window?.observe(\.titleVisibility, options: [.new]) { window, _ in
+                MainActor.assumeIsolated {
+                    if window.titleVisibility != .hidden {
+                        window.titleVisibility = .hidden
+                    }
+                }
+            }
+        }
+
+        // Apply synchronously before drawing; only the SwiftUI state callback
+        // above is deferred to avoid publishing changes during a view update.
+        func hideTitle() {
+            if let window, window.titleVisibility != .hidden {
+                window.titleVisibility = .hidden
+            }
+        }
     }
 }
 
@@ -1023,14 +1453,24 @@ private struct WindowAccessor: NSViewRepresentable {
 /// selection and activation states.
 private struct SidebarLabel: View {
     let title: String
-    let systemImage: String
+    let icon: SourceIcon
+
+    init(title: String, systemImage: String) {
+        self.title = title
+        self.icon = .symbol(systemImage)
+    }
+
+    init(title: String, icon: SourceIcon) {
+        self.title = title
+        self.icon = icon
+    }
 
     var body: some View {
         Label {
             Text(title)
                 .foregroundStyle(Color(nsColor: .labelColor))
         } icon: {
-            Image(systemName: systemImage)
+            SourceIconView(icon: icon)
                 .foregroundStyle(Color(nsColor: .secondaryLabelColor))
         }
         // Sidebar and OutlineGroup can otherwise reduce nested rows to the

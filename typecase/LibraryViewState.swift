@@ -8,6 +8,26 @@ nonisolated struct PreviewCoverageRequest: Equatable, Sendable {
     let familiesRevision: Int
 }
 
+/// How the library list is ordered. Favorites-first stays a separate setting,
+/// so it layers on top of every order.
+nonisolated enum LibrarySortOrder: String, CaseIterable, Identifiable, Sendable {
+    case name
+    case manufacturer
+    case dateAdded
+    case activation
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .name: "Name"
+        case .manufacturer: "Manufacturer"
+        case .dateAdded: "Recently Added"
+        case .activation: "Activated First"
+        }
+    }
+}
+
 /// A window's library UI state: selection, filters, and preview settings.
 ///
 /// Window state is separate from the shared catalog so a window can browse with
@@ -19,6 +39,7 @@ final class LibraryViewState: ObservableObject {
     @Published var librarySelection: LibrarySelection = .section(.all)
     @Published var category: FontCategory?
     @Published var activationFilter: ActivationFilter = .all
+    @Published var sortOrder: LibrarySortOrder = .name
     @Published var previewText = ""
     @Published private(set) var coverageRevision = 0
 
@@ -37,6 +58,7 @@ final class LibraryViewState: ObservableObject {
         let librarySelection: LibrarySelection
         let category: FontCategory?
         let activationFilter: ActivationFilter
+        let sortOrder: LibrarySortOrder
         let favoritesFirst: Bool
         let catalogRevision: Int
         let coverageRevision: Int
@@ -54,6 +76,7 @@ final class LibraryViewState: ObservableObject {
             librarySelection: librarySelection,
             category: category,
             activationFilter: activationFilter,
+            sortOrder: sortOrder,
             favoritesFirst: favoritesFirst,
             catalogRevision: catalog.dataRevision,
             coverageRevision: coverageRevision
@@ -97,15 +120,28 @@ final class LibraryViewState: ObservableObject {
             matches.append(family)
         }
 
-        if favoritesFirst {
-            // The catalog order is by name; sorting on the favorite flag with a
-            // name tiebreaker keeps that order inside both groups.
-            matches.sort { lhs, rhs in
+        // The catalog order is by name; every order keeps a name tiebreaker so
+        // equal entries stay predictable. Favorites-first is layered on top.
+        matches.sort { lhs, rhs in
+            if favoritesFirst {
                 let lhsFavorite = catalog.favorites.contains(lhs.id)
                 let rhsFavorite = catalog.favorites.contains(rhs.id)
                 if lhsFavorite != rhsFavorite { return lhsFavorite }
-                return lhs.name.localizedStandardCompare(rhs.name) == .orderedAscending
             }
+            switch sortOrder {
+            case .name:
+                break
+            case .manufacturer:
+                let comparison = lhs.manufacturer.localizedStandardCompare(rhs.manufacturer)
+                if comparison != .orderedSame { return comparison == .orderedAscending }
+            case .dateAdded:
+                let lhsTime = catalog.addedTime(for: lhs)
+                let rhsTime = catalog.addedTime(for: rhs)
+                if lhsTime != rhsTime { return lhsTime > rhsTime }
+            case .activation:
+                if lhs.isEnabled != rhs.isEnabled { return lhs.isEnabled }
+            }
+            return lhs.name.localizedStandardCompare(rhs.name) == .orderedAscending
         }
 
         let output = FilterOutput(families: matches, sectionIsEmpty: sectionMatches == 0)
@@ -208,15 +244,19 @@ final class LibraryViewState: ObservableObject {
 
     private func matchesSection(_ family: FontFamily, catalog: FontCatalog) -> Bool {
         switch librarySelection {
-        case .section(.all): true
-        case .section(.favorites): catalog.favorites.contains(family.id)
-        case .section(.system): family.source == .system
-        case .section(.local): family.source == .local
-        case .section(.adobe): family.source == .adobe
-        case .section(.morisawa): family.source == .morisawa
-        case .systemScope(let scope): catalog.familySystemScopes[family.id]?.contains(scope) ?? false
+        case .section(let section):
+            if let provider = section.provider { return family.source == .provider(provider) }
+            switch section {
+            case .all: return true
+            case .favorites: return catalog.favorites.contains(family.id)
+            case .system: return family.source == .system
+            case .local: return family.source == .local
+            default: return false
+            }
+        case .systemScope(let scope):
+            return catalog.familySystemScopes[family.id]?.contains(scope) ?? false
         case .folder(let folder):
-            catalog.familyFolderAncestors[family.id]?.contains(folder.standardizedFileURL) ?? false
+            return catalog.familyFolderAncestors[family.id]?.contains(folder.standardizedFileURL) ?? false
         }
     }
 }
