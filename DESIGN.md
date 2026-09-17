@@ -26,7 +26,7 @@ TypeCase uses a quiet, native macOS library interface inspired by the informatio
 - Main library width: 480 pt minimum.
 - Inspector width: 280–400 pt.
 - Repeated font rows use vertical spacing rather than cards or shadows.
-- Source, language, classification, version, glyph count, embedding permission, and designer use `LabeledContent` in the inspector; the copyright and license notices follow as secondary text.
+- Inspector details use a consistent eyebrow layout: each muted field label sits above its value or control. Copyright and license values are limited to four lines and expose the full text as help.
 
 ## Components and motion
 

@@ -1080,10 +1080,10 @@ private struct FontInspector: View {
                     }
 
                     Group {
-                        LabeledContent("Source", value: family.source.title)
-                        LabeledContent("Language", value: family.supportsJapanese ? "Japanese" : "Latin / Other")
-                        LabeledContent("Styles", value: "\(family.faces.count)")
-                        LabeledContent("Classification") {
+                        inspectorDetail("Source", family.source.title)
+                        inspectorDetail("Language", family.supportsJapanese ? "Japanese" : "Latin / Other")
+                        inspectorDetail("Styles", "\(family.faces.count)")
+                        inspectorDetail("Classification") {
                             Picker("Classification", selection: classificationBinding(for: family)) {
                                 ForEach(FontCategory.allCases) { category in
                                     Text(category.title).tag(category)
@@ -1175,36 +1175,50 @@ private struct FontInspector: View {
         if hasSummary {
             Group {
                 if let version = metadata.versionNumber {
-                    LabeledContent("Version", value: version)
+                    inspectorDetail("Version", version)
                 }
                 if let glyphCount = metadata.glyphCount {
-                    LabeledContent("Glyphs", value: glyphCount.formatted())
+                    inspectorDetail("Glyphs", glyphCount.formatted())
                 }
                 if let embedding = metadata.embedding {
-                    LabeledContent("Embedding", value: embedding.title)
+                    inspectorDetail("Embedding", embedding.title)
                 }
                 if let designer = metadata.designer {
-                    LabeledContent("Designer", value: designer)
+                    inspectorDetail("Designer", designer)
                 }
             }
         }
         if let copyright = metadata.copyright {
-            metadataNote("Copyright", copyright)
+            inspectorDetail("Copyright", copyright, lineLimit: 4)
         }
         if let license = metadata.license, license != metadata.copyright {
-            metadataNote("License", license)
+            inspectorDetail("License", license, lineLimit: 4)
         }
     }
 
-    private func metadataNote(_ title: String, _ text: String) -> some View {
+    private func inspectorDetail<Content: View>(
+        _ title: String,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(title)
                 .font(.callout)
                 .foregroundStyle(.secondary)
+            content()
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func inspectorDetail(
+        _ title: String,
+        _ text: String,
+        lineLimit: Int? = nil
+    ) -> some View {
+        inspectorDetail(title) {
             Text(text)
                 .font(.callout)
                 .textSelection(.enabled)
-                .lineLimit(4)
+                .lineLimit(lineLimit)
                 .help(text)
         }
     }
