@@ -4,8 +4,8 @@ import Foundation
 /// `name`, `maxp`, and `OS/2` tables.
 ///
 /// Core Text localizes family names using the user's global language order, so an English-first
-/// language list always yields English names. Reading the table lets TypeCase show the Japanese
-/// name for Japanese fonts regardless of the system language.
+/// language list always yields English names. Reading the table lets TypeCase show the Japanese,
+/// Chinese, or Korean name for those fonts regardless of the system language.
 nonisolated enum FontNameTable {
     /// Descriptive information read from a face's font file.
     struct Metadata: Sendable {
@@ -51,21 +51,39 @@ nonisolated enum FontNameTable {
     struct FamilyNames {
         var family: String?
         var typographicFamily: String?
-        var japaneseFamily: String?
-        var japaneseTypographicFamily: String?
+        var localizedFamilies: [FontLanguage: String] = [:]
+        var localizedTypographicFamilies: [FontLanguage: String] = [:]
     }
 
-    /// Maps lowercased English family names to Japanese family names for every font in the file.
-    static func japaneseFamilies(inFontAt url: URL) -> [String: String] {
+    /// A family's localized names and design languages, as read from one file.
+    struct LocalizedFamily: Sendable {
+        var names: [FontLanguage: String] = [:]
+        /// The scripts the font is designed for, from the `meta` table's
+        /// `dlng` records. Empty when the file carries no `meta` table.
+        var designLanguages: Set<FontLanguage> = []
+    }
+
+    /// Maps lowercased English family names to the localized family names and
+    /// design languages found in the file's `name` and `meta` tables.
+    static func localizedFamilies(inFontAt url: URL) -> [String: LocalizedFamily] {
         guard let data = try? Data(contentsOf: url, options: .mappedIfSafe) else { return [:] }
 
-        var mapping: [String: String] = [:]
+        var mapping: [String: LocalizedFamily] = [:]
         for base in subfontOffsets(in: data) {
             let names = familyNames(in: data, atSubfont: base)
-            let japanese = names.japaneseTypographicFamily ?? names.japaneseFamily
-            guard let japanese else { continue }
-            if let family = names.family { mapping[family.lowercased()] = japanese }
-            if let typographic = names.typographicFamily { mapping[typographic.lowercased()] = japanese }
+            // A typographic family name is the more precise one, so it wins
+            // when a face carries both name IDs in the same language.
+            var localized = names.localizedTypographicFamilies
+            localized.merge(names.localizedFamilies) { current, _ in current }
+            let designLanguages = designLanguages(in: data, atSubfont: base)
+            guard !localized.isEmpty || !designLanguages.isEmpty else { continue }
+            for name in [names.family, names.typographicFamily] {
+                guard let key = name?.lowercased() else { continue }
+                var family = mapping[key] ?? LocalizedFamily()
+                family.names.merge(localized) { current, _ in current }
+                family.designLanguages.formUnion(designLanguages)
+                mapping[key] = family
+            }
         }
         return mapping
     }
@@ -110,6 +128,8 @@ nonisolated enum FontNameTable {
         static let name: UInt32 = 0x6e61_6d65 // 'name'
         static let maxp: UInt32 = 0x6d61_7870 // 'maxp'
         static let os2: UInt32 = 0x4f53_2f32 // 'OS/2'
+        static let meta: UInt32 = 0x6d65_7461 // 'meta'
+        static let dlng: UInt32 = 0x646c_6e67 // 'dlng'
     }
 
     private static func subfontOffsets(in data: Data) -> [Int] {
@@ -148,6 +168,33 @@ nonisolated enum FontNameTable {
     private static func nameRecords(in data: Data, atSubfont base: Int) -> [UInt16: [UInt16: String]] {
         guard let tables = tableDirectory(in: data, at: base), let name = tables[Tag.name] else { return [:] }
         return nameRecords(in: data, at: name.offset, length: name.length)
+    }
+
+    /// The design languages a subfont targets, read from its `meta` table.
+    ///
+    /// Core Text's language list reports what a font can display, which for CJK
+    /// fonts includes scripts the design does not target. The `dlng` records
+    /// name the scripts the font was designed for, so a Chinese font that
+    /// carries a Japanese alias name is still recognized as Chinese.
+    private static func designLanguages(in data: Data, atSubfont base: Int) -> Set<FontLanguage> {
+        guard let tables = tableDirectory(in: data, at: base),
+              let meta = tables[Tag.meta], meta.length >= 16 else { return [] }
+        let count = Int(readUInt32(data, meta.offset + 12))
+        guard count > 0, count <= 256 else { return [] }
+
+        var languages: Set<FontLanguage> = []
+        for record in 0..<count {
+            let entry = meta.offset + 16 + record * 12
+            guard entry + 12 <= meta.offset + meta.length else { break }
+            guard readUInt32(data, entry) == Tag.dlng else { continue }
+            let offset = meta.offset + Int(readUInt32(data, entry + 4))
+            let length = Int(readUInt32(data, entry + 8))
+            guard offset > 0, length > 0, offset + length <= data.count,
+                  let value = String(data: data[offset..<offset + length], encoding: .utf8) else { continue }
+            let codes = value.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
+            languages.formUnion(FontLanguage.detected(in: codes))
+        }
+        return languages
     }
 
     /// Windows- and Macintosh-platform name strings by name ID and language ID.
@@ -191,9 +238,37 @@ nonisolated enum FontNameTable {
         FamilyNames(
             family: records[1]?[0x0409],
             typographicFamily: records[16]?[0x0409],
-            japaneseFamily: records[1]?[0x0411],
-            japaneseTypographicFamily: records[16]?[0x0411]
+            localizedFamilies: localizedNames(in: records, id: 1),
+            localizedTypographicFamilies: localizedNames(in: records, id: 16)
         )
+    }
+
+    /// The localized family names for a name ID, keyed by the language their
+    /// OpenType language ID names.
+    private static func localizedNames(in records: [UInt16: [UInt16: String]], id: UInt16) -> [FontLanguage: String] {
+        guard let values = records[id] else { return [:] }
+        var names: [FontLanguage: String] = [:]
+        // Sorted keys keep the result stable when a language has several
+        // regional records, such as zh-CN and zh-SG.
+        for openTypeID in values.keys.sorted() {
+            guard let value = values[openTypeID],
+                  let language = fontLanguage(forOpenTypeLanguageID: openTypeID),
+                  names[language] == nil else { continue }
+            names[language] = value
+        }
+        return names
+    }
+
+    /// Maps the OpenType language IDs CJK fonts use to the language whose name
+    /// they carry. Only the languages TypeCase shows previews for are read.
+    private static func fontLanguage(forOpenTypeLanguageID id: UInt16) -> FontLanguage? {
+        switch id {
+        case 0x0411: return .japanese
+        case 0x0804, 0x1004: return .simplifiedChinese
+        case 0x0404, 0x0C04, 0x1404: return .traditionalChinese
+        case 0x0412: return .korean
+        default: return nil
+        }
     }
 
     /// The English record for a name ID, falling back to the lowest language ID.

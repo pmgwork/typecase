@@ -39,7 +39,7 @@ final class FontCatalog: ObservableObject {
     /// Names the user deactivated since the last installed-font scan. The scan's
     /// installed records may still list them, so they are masked when regrouping.
     private var deactivatedManagedNames: Set<String> = []
-    private var japaneseNameCache: [URL: [String: String]] = [:]
+    private var localizedNameCache: [URL: [String: FontNameTable.LocalizedFamily]] = [:]
     private var fileCache: [URL: CachedFontFile] = [:]
     private var installedRecords: [FaceRecord] = []
     private var folderRecords: [FaceRecord] = []
@@ -317,10 +317,10 @@ final class FontCatalog: ObservableObject {
             previousInstalledRecords: installedRecords,
             previousFiles: fileCache,
             previousRoots: scannedRoots,
-            japaneseNameCache: japaneseNameCache
+            localizedNameCache: localizedNameCache
         ))
 
-        japaneseNameCache = output.japaneseNameCache
+        localizedNameCache = output.localizedNameCache
         fileCache = output.files
         folderRecords = output.folderRecords
         scannedRoots = roots
@@ -760,14 +760,20 @@ final class FontCatalog: ObservableObject {
             } else {
                 source = .system
             }
+            let languages = Set(records.flatMap(\.languages))
+            let localizedNames = records.reduce(into: [FontLanguage: String]()) { names, record in
+                for (language, name) in record.localizedNames where names[language] == nil {
+                    names[language] = name
+                }
+            }
             return FontFamily(
                 id: id,
-                name: records.compactMap(\.japaneseName).first ?? first.family,
                 localizedName: first.family,
+                languages: languages,
+                localizedNames: localizedNames,
                 manufacturer: first.manufacturer,
                 source: source,
                 category: categoryOverrides[id] ?? first.category,
-                supportsJapanese: records.contains(where: \.supportsJapanese),
                 faces: deduplicated
             )
         }

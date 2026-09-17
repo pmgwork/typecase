@@ -185,8 +185,13 @@ private struct PreviewSettingsView: View {
             }
 
             Section {
-                TextField("Japanese", text: $settings.japaneseSampleText, prompt: Text(AppSettings.japaneseSampleDefault))
-                TextField("Latin", text: $settings.latinSampleText, prompt: Text(AppSettings.latinSampleDefault))
+                ForEach(FontLanguage.allCases) { language in
+                    TextField(
+                        language.title,
+                        text: sampleTextBinding(language),
+                        prompt: Text(language.sampleDefault)
+                    )
+                }
                 Button("Restore Defaults") { settings.resetSampleText() }
             } header: {
                 Text("Sample Text")
@@ -198,6 +203,13 @@ private struct PreviewSettingsView: View {
         }
         .formStyle(.grouped)
         .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private func sampleTextBinding(_ language: FontLanguage) -> Binding<String> {
+        Binding(
+            get: { settings.sampleText(for: language) },
+            set: { settings.setSampleText($0, for: language) }
+        )
     }
 }
 

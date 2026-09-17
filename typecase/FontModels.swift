@@ -117,13 +117,43 @@ nonisolated enum VariationTag {
 
 nonisolated struct FontFamily: Identifiable, Hashable, Sendable {
     let id: String
-    let name: String
+    /// The English family name Core Text reports, shown as the secondary name.
     let localizedName: String
+    /// The CJK languages the family's faces declare. Latin-only fonts have an
+    /// empty set.
+    let languages: Set<FontLanguage>
+    /// The localized family names found in the faces' name tables, limited to
+    /// the languages the faces declare.
+    let localizedNames: [FontLanguage: String]
     let manufacturer: String
     let source: FontSource
     let category: FontCategory
-    let supportsJapanese: Bool
     let faces: [FontFace]
+
+    /// The display name: the family's name in its highest-priority language,
+    /// or the English name when the file carries no localized name.
+    var name: String {
+        localizedNames[previewLanguage] ?? localizedName
+    }
+
+    /// The language whose sample text and display name the family uses. A
+    /// localized name is the strongest signal of the script a family targets;
+    /// the declared languages decide when no localized name exists.
+    var previewLanguage: FontLanguage {
+        FontLanguage.previewPriority.first { localizedNames[$0] != nil }
+            ?? FontLanguage.previewPriority.first { languages.contains($0) }
+            ?? .latin
+    }
+
+    /// The languages listed in the inspector, in preview priority order.
+    var languageDescription: String {
+        let named = FontLanguage.previewPriority.filter { localizedNames[$0] != nil }
+        let described = named.isEmpty
+            ? FontLanguage.previewPriority.filter { languages.contains($0) }
+            : named
+        guard !described.isEmpty else { return FontLanguage.latin.title }
+        return described.map(\.title).joined(separator: ", ")
+    }
 
     var isEnabled: Bool { faces.contains(where: \.isInstalled) }
     var isPartiallyEnabled: Bool {

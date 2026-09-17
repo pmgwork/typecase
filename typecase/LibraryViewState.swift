@@ -104,6 +104,7 @@ final class LibraryViewState: ObservableObject {
             if !query.isEmpty {
                 let matchesSearch = family.name.localizedCaseInsensitiveContains(query)
                     || family.localizedName.localizedCaseInsensitiveContains(query)
+                    || family.localizedNames.values.contains { $0.localizedCaseInsensitiveContains(query) }
                     || family.manufacturer.localizedCaseInsensitiveContains(query)
                     || (catalog.userTags[family.id]?.contains { $0.localizedCaseInsensitiveContains(query) } ?? false)
                 guard matchesSearch else { continue }

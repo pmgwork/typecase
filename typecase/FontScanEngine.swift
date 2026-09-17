@@ -7,21 +7,24 @@ import Foundation
 /// from the current activation state when records are applied.
 nonisolated struct FaceRecord: Sendable {
     let family: String
-    let japaneseName: String?
+    /// The localized family names the face's file provides for the languages
+    /// the face declares, by language.
+    let localizedNames: [FontLanguage: String]
     let manufacturer: String
     let source: FontSource
     let category: FontCategory
-    let supportsJapanese: Bool
+    /// The CJK languages the face declares; empty for Latin-only faces.
+    let languages: Set<FontLanguage>
     let face: FontFace
 
     func withInstalled(_ installed: Bool) -> FaceRecord {
         FaceRecord(
             family: family,
-            japaneseName: japaneseName,
+            localizedNames: localizedNames,
             manufacturer: manufacturer,
             source: source,
             category: category,
-            supportsJapanese: supportsJapanese,
+            languages: languages,
             face: FontFace(
                 postScriptName: face.postScriptName,
                 styleName: face.styleName,
@@ -63,14 +66,14 @@ nonisolated struct FontScanInput: Sendable {
     let previousInstalledRecords: [FaceRecord]
     let previousFiles: [URL: CachedFontFile]
     let previousRoots: [URL]
-    let japaneseNameCache: [URL: [String: String]]
+    let localizedNameCache: [URL: [String: FontNameTable.LocalizedFamily]]
 }
 
 nonisolated struct FontScanOutput: Sendable {
     let installedRecords: [FaceRecord]
     let folderRecords: [FaceRecord]
     let files: [URL: CachedFontFile]
-    let japaneseNameCache: [URL: [String: String]]
+    let localizedNameCache: [URL: [String: FontNameTable.LocalizedFamily]]
     /// Files that were added or whose modification date or size changed; these need registration.
     let changedFiles: [URL]
     let folderTrees: [FontFolderNode]
@@ -108,7 +111,7 @@ actor FontScanEngine {
     }
 
     func scan(_ input: FontScanInput) -> FontScanOutput {
-        var nameCache = input.japaneseNameCache
+        var nameCache = input.localizedNameCache
         var directoryDates: [String: TimeInterval] = [:]
         var filesByRoot: [URL: [URL]] = [:]
         var currentStamps: [URL: FontFileStamp] = [:]
@@ -169,7 +172,7 @@ actor FontScanEngine {
         changed.sort { $0.path < $1.path }
         removed.sort { $0.path < $1.path }
 
-        // A changed or removed file invalidates its Japanese name mapping.
+        // A changed or removed file invalidates its localized name mapping.
         for url in changed { nameCache.removeValue(forKey: url) }
         for url in removed {
             nameCache.removeValue(forKey: url)
@@ -222,7 +225,7 @@ actor FontScanEngine {
             installedRecords: installedRecords,
             folderRecords: folderRecords,
             files: files,
-            japaneseNameCache: nameCache,
+            localizedNameCache: nameCache,
             changedFiles: changed,
             folderTrees: folderTrees,
             directoryFingerprint: Self.fingerprint(directoryDates),
@@ -277,7 +280,7 @@ actor FontScanEngine {
         _ url: URL,
         stamp: FontFileStamp,
         manifestNames: [String: Set<String>],
-        nameCache: inout [URL: [String: String]]
+        nameCache: inout [URL: [String: FontNameTable.LocalizedFamily]]
     ) -> CachedFontFile {
         var names: Set<String> = []
         var records: [FaceRecord] = []
@@ -308,7 +311,7 @@ actor FontScanEngine {
         fallbackWeight: Int = 5,
         managed: Bool,
         manifestNames: [String: Set<String>],
-        nameCache: inout [URL: [String: String]]
+        nameCache: inout [URL: [String: FontNameTable.LocalizedFamily]]
     ) -> FaceRecord? {
         let family = attribute(descriptor, key: kCTFontFamilyNameAttribute) ?? fallbackFamily
         let name = attribute(descriptor, key: kCTFontNameAttribute)
@@ -320,12 +323,18 @@ actor FontScanEngine {
         let fontURL = CTFontCopyAttribute(font, kCTFontURLAttribute) as? URL
         let url = fallbackURL ?? descriptorURL ?? fontURL
         let source = fontSource(url: url, manufacturer: manufacturer, managed: managed, manifestNames: manifestNames)
-        let languages = CTFontDescriptorCopyAttribute(descriptor, kCTFontLanguagesAttribute) as? [String] ?? []
-        let supportsJapanese = languages.contains { $0 == "ja" || $0.hasPrefix("ja-") }
-        // Only Japanese fonts can carry a Japanese name, so skip the name table for the rest.
-        let japaneseName = supportsJapanese
-            ? japaneseFamilyName(for: url, family: family, nameCache: &nameCache)
-            : nil
+        let languageCodes = CTFontDescriptorCopyAttribute(descriptor, kCTFontLanguagesAttribute) as? [String] ?? []
+        let declaredLanguages = FontLanguage.detected(in: languageCodes)
+        // Only fonts that declare a CJK language can carry localized family
+        // names, so skip the name table for the rest. The design languages
+        // decide what the font is for when the file records them; a Chinese
+        // font with a Japanese alias name is told apart this way.
+        let localization = declaredLanguages.isEmpty
+            ? nil
+            : localizedFamily(for: url, family: family, nameCache: &nameCache)
+        let languages = localization.flatMap { $0.designLanguages.isEmpty ? nil : $0.designLanguages }
+            ?? declaredLanguages
+        let localizedNames = (localization?.names ?? [:]).filter { languages.contains($0.key) }
         let traits = CTFontDescriptorCopyAttribute(descriptor, kCTFontTraitsAttribute) as? [CFString: Any]
         let symbolic = (traits?[kCTFontSymbolicTrait] as? NSNumber)?.uint32Value ?? 0
         let category = classify(family: family, style: style, symbolicTraits: symbolic)
@@ -343,26 +352,28 @@ actor FontScanEngine {
         )
         return FaceRecord(
             family: family,
-            japaneseName: japaneseName,
+            localizedNames: localizedNames,
             manufacturer: manufacturer,
             source: source,
             category: category,
-            supportsJapanese: supportsJapanese,
+            languages: languages,
             face: face
         )
     }
 
-    private func japaneseFamilyName(
+    /// The localized family names and design languages the face's file carries
+    /// for the requested family name.
+    private func localizedFamily(
         for url: URL?,
         family: String,
-        nameCache: inout [URL: [String: String]]
-    ) -> String? {
+        nameCache: inout [URL: [String: FontNameTable.LocalizedFamily]]
+    ) -> FontNameTable.LocalizedFamily? {
         guard let url else { return nil }
-        let mapping: [String: String]
+        let mapping: [String: FontNameTable.LocalizedFamily]
         if let cached = nameCache[url] {
             mapping = cached
         } else {
-            mapping = FontNameTable.japaneseFamilies(inFontAt: url)
+            mapping = FontNameTable.localizedFamilies(inFontAt: url)
             nameCache[url] = mapping
         }
         return mapping[family.lowercased()]
@@ -394,10 +405,13 @@ actor FontScanEngine {
         if symbolicTraits & CTFontSymbolicTraits.traitMonoSpace.rawValue != 0 || searchable.contains("mono") {
             return .monospaced
         }
-        if searchable.contains("serif") || searchable.contains("明朝") {
+        if searchable.contains("serif") || searchable.contains("明朝") || searchable.contains("宋")
+            || searchable.contains("myeongjo") || searchable.contains("batang") || searchable.contains("바탕") {
             return .serif
         }
-        if searchable.contains("sans") || searchable.contains("gothic") || searchable.contains("ゴシック") {
+        if searchable.contains("sans") || searchable.contains("gothic") || searchable.contains("ゴシック")
+            || searchable.contains("黑") || searchable.contains("고딕") || searchable.contains("dotum")
+            || searchable.contains("돋움") {
             return .sansSerif
         }
         if searchable.contains("display") || searchable.contains("script") || searchable.contains("decorative") {

@@ -557,29 +557,13 @@ private struct FontLibraryView: View {
                     guard let expanded = expandedFamilyID, selection != [expanded] else { return }
                     expandedFamilyID = nil
                 }
-                // The preview-text editor stays pinned below the list.
-                .safeAreaInset(edge: .bottom, spacing: 0) {
-                    PreviewTextEditor(viewState: viewState)
-                        .padding(.horizontal, 16)
-                        .padding(.top, 28)
-                        .padding(.bottom, 16)
-                        .background {
-                            // Fade list content out before it reaches the panel; busy
-                            // font previews behind the glass hurt legibility. This is
-                            // the same gradient-fade approach the system uses for bars.
-                            LinearGradient(
-                                stops: [
-                                    .init(color: canvasColor.opacity(0), location: 0),
-                                    .init(color: canvasColor.opacity(0.9), location: 0.45),
-                                    .init(color: canvasColor.opacity(0.9), location: 1),
-                                ],
-                                startPoint: .top,
-                                endPoint: .bottom
-                            )
-                            .allowsHitTesting(false)
-                        }
-                }
             }
+        }
+        // The preview-text editor stays pinned below the font list area, in
+        // every state of the list, so text can always be edited or cleared
+        // even while it filters every font out.
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            previewTextEditor
         }
         // The chosen background paints the whole font list area, so specimens
         // sit directly on it. The inspector keeps the system surface.
@@ -590,6 +574,28 @@ private struct FontLibraryView: View {
             viewState.updateCoverage(catalog: catalog)
         }
         .navigationSplitViewColumnWidth(min: 320, ideal: 640)
+    }
+
+    private var previewTextEditor: some View {
+        PreviewTextEditor(viewState: viewState)
+            .padding(.horizontal, 16)
+            .padding(.top, 28)
+            .padding(.bottom, 16)
+            .background {
+                // Fade list content out before it reaches the panel; busy
+                // font previews behind the glass hurt legibility. This is
+                // the same gradient-fade approach the system uses for bars.
+                LinearGradient(
+                    stops: [
+                        .init(color: canvasColor.opacity(0), location: 0),
+                        .init(color: canvasColor.opacity(0.9), location: 0.45),
+                        .init(color: canvasColor.opacity(0.9), location: 1),
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+                .allowsHitTesting(false)
+            }
     }
 
     /// The specimen canvas color: the chosen background, or the window color
@@ -1081,7 +1087,7 @@ private struct FontInspector: View {
 
                     Group {
                         inspectorDetail("Source", family.source.title)
-                        inspectorDetail("Language", family.supportsJapanese ? "Japanese" : "Latin / Other")
+                        inspectorDetail("Language", family.languageDescription)
                         inspectorDetail("Styles", "\(family.faces.count)")
                         inspectorDetail("Classification") {
                             Picker("Classification", selection: classificationBinding(for: family)) {
@@ -1510,7 +1516,10 @@ private struct PreviewTextEditor: View {
         ("fox", "The quick brown fox jumps over the lazy dog."),
         ("deutsch", "Zwölf Boxkämpfer jagen Eva quer über den großen Sylter Deich."),
         ("français", "Portez ce vieux whisky au juge blond qui fume."),
-        ("日本語", "美しい文字は、言葉の表情を豊かにする。"),
+        ("日本語", FontLanguage.japanese.sampleDefault),
+        ("简体中文", FontLanguage.simplifiedChinese.sampleDefault),
+        ("繁體中文", FontLanguage.traditionalChinese.sampleDefault),
+        ("한국어", FontLanguage.korean.sampleDefault),
         ("symbols", "→ ← ↑ ↓ ★ ☆ ♠ ♥ ♦ ♣ € £ ¥ © ® ™"),
     ]
 
@@ -1519,24 +1528,32 @@ private struct PreviewTextEditor: View {
             TextField("Enter preview text…", text: $viewState.previewText)
                 .textFieldStyle(.roundedBorder)
 
-            FlowLayout(spacing: 8) {
-                ForEach(Self.builtInPresets, id: \.title) { preset in
-                    presetChip(preset.title) {
-                        viewState.previewText = preset.text
-                    }
-                }
+            HStack(spacing: 8) {
+                // One row that scrolls sideways rather than wrapping, so the
+                // panel keeps its height at every window width.
+                ScrollView(.horizontal) {
+                    HStack(spacing: 8) {
+                        ForEach(Self.builtInPresets, id: \.title) { preset in
+                            presetChip(preset.title) {
+                                viewState.previewText = preset.text
+                            }
+                        }
 
-                ForEach(customPresets, id: \.self) { preset in
-                    presetChip(preset) {
-                        viewState.previewText = preset
-                    }
-                    .contextMenu {
-                        Button("Remove Preset", role: .destructive) {
-                            removePreset(preset)
+                        ForEach(customPresets, id: \.self) { preset in
+                            presetChip(preset) {
+                                viewState.previewText = preset
+                            }
+                            .contextMenu {
+                                Button("Remove Preset", role: .destructive) {
+                                    removePreset(preset)
+                                }
+                            }
                         }
                     }
                 }
 
+                // The add button stays outside the scrolling area so it is
+                // always reachable.
                 Button {
                     addCurrentAsPreset()
                 } label: {
@@ -1593,51 +1610,3 @@ private struct PreviewTextEditor: View {
     }
 }
 
-/// Wraps chips onto as many lines as needed.
-private struct FlowLayout: Layout {
-    var spacing: CGFloat = 8
-
-    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-        let maxWidth = proposal.width ?? .infinity
-        var lines: [[CGSize]] = []
-        var line: [CGSize] = []
-        var lineWidth: CGFloat = 0
-        for subview in subviews {
-            let size = subview.sizeThatFits(.unspecified)
-            let candidate = line.isEmpty ? size.width : lineWidth + spacing + size.width
-            if !line.isEmpty, candidate > maxWidth {
-                lines.append(line)
-                line = [size]
-                lineWidth = size.width
-            } else {
-                line.append(size)
-                lineWidth = candidate
-            }
-        }
-        if !line.isEmpty { lines.append(line) }
-
-        let height = lines.reduce(0) { $0 + ($1.map(\.height).max() ?? 0) }
-            + spacing * CGFloat(max(lines.count - 1, 0))
-        let width = lines.map { line in
-            line.reduce(0) { $0 + $1.width } + spacing * CGFloat(max(line.count - 1, 0))
-        }.max() ?? 0
-        return CGSize(width: min(width, maxWidth), height: height)
-    }
-
-    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
-        var x = bounds.minX
-        var y = bounds.minY
-        var lineHeight: CGFloat = 0
-        for subview in subviews {
-            let size = subview.sizeThatFits(.unspecified)
-            if x > bounds.minX, x + size.width > bounds.maxX {
-                x = bounds.minX
-                y += lineHeight + spacing
-                lineHeight = 0
-            }
-            subview.place(at: CGPoint(x: x, y: y), anchor: .topLeading, proposal: ProposedViewSize(size))
-            x += size.width + spacing
-            lineHeight = max(lineHeight, size.height)
-        }
-    }
-}

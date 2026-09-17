@@ -7,18 +7,15 @@ import SwiftUI
 /// and the Settings scene.
 @MainActor
 final class AppSettings: ObservableObject {
-    static let japaneseSampleDefault = "美しい文字は、言葉の表情を豊かにする。"
-    static let latinSampleDefault = "Typography gives every word a distinct voice."
     static let previewSizeRange: ClosedRange<Double> = 18...72
 
     @Published var previewSize: Double {
         didSet { defaults.set(previewSize, forKey: Key.previewSize) }
     }
-    @Published var japaneseSampleText: String {
-        didSet { defaults.set(japaneseSampleText, forKey: Key.japaneseSample) }
-    }
-    @Published var latinSampleText: String {
-        didSet { defaults.set(latinSampleText, forKey: Key.latinSample) }
+    /// The preview sample text per language. A missing entry means the
+    /// language's built-in default.
+    @Published private(set) var sampleTexts: [FontLanguage: String] {
+        didSet { storeSampleTexts() }
     }
     /// The colors of the font specimens, chosen from the toolbar. `nil` follows
     /// the system appearance; a chosen color stays fixed across appearances.
@@ -66,8 +63,7 @@ final class AppSettings: ObservableObject {
     init() {
         let storedSize = defaults.object(forKey: Key.previewSize) as? Double ?? 32
         previewSize = min(max(storedSize, Self.previewSizeRange.lowerBound), Self.previewSizeRange.upperBound)
-        japaneseSampleText = defaults.string(forKey: Key.japaneseSample) ?? ""
-        latinSampleText = defaults.string(forKey: Key.latinSample) ?? ""
+        sampleTexts = Self.loadSampleTexts(defaults: defaults)
         previewBackgroundColor = defaults.string(forKey: Key.previewBackgroundColor)
             .flatMap(Color.init(specimenHex:))
         previewTextColor = defaults.string(forKey: Key.previewTextColor)
@@ -86,24 +82,62 @@ final class AppSettings: ObservableObject {
 
     // MARK: - Preview
 
-    var japaneseSample: String {
-        japaneseSampleText.isEmpty ? Self.japaneseSampleDefault : japaneseSampleText
+    /// The sample text stored for a language; empty when the default is used.
+    func sampleText(for language: FontLanguage) -> String {
+        sampleTexts[language] ?? ""
     }
 
-    var latinSample: String {
-        latinSampleText.isEmpty ? Self.latinSampleDefault : latinSampleText
+    /// Stores a language's sample text; an empty string restores the default.
+    func setSampleText(_ text: String, for language: FontLanguage) {
+        if text.isEmpty {
+            sampleTexts.removeValue(forKey: language)
+        } else {
+            sampleTexts[language] = text
+        }
+    }
+
+    /// The sample text a preview shows for a language: the stored text or its
+    /// built-in default.
+    func sample(for language: FontLanguage) -> String {
+        sampleTexts[language] ?? language.sampleDefault
     }
 
     /// The text a preview shows: the entered text, or the language sample.
     func effectivePreviewText(for family: FontFamily, entered: String) -> String {
         let trimmed = entered.trimmingCharacters(in: .whitespacesAndNewlines)
         if !trimmed.isEmpty { return entered }
-        return family.supportsJapanese ? japaneseSample : latinSample
+        return sample(for: family.previewLanguage)
     }
 
     func resetSampleText() {
-        japaneseSampleText = ""
-        latinSampleText = ""
+        sampleTexts = [:]
+    }
+
+    /// Loads the per-language sample texts, migrating the Japanese and Latin
+    /// fields that predated the other languages.
+    private static func loadSampleTexts(defaults: UserDefaults) -> [FontLanguage: String] {
+        if let stored = defaults.dictionary(forKey: Key.sampleTexts) as? [String: String] {
+            return stored.reduce(into: [:]) { texts, entry in
+                if let language = FontLanguage(rawValue: entry.key), !entry.value.isEmpty {
+                    texts[language] = entry.value
+                }
+            }
+        }
+        var migrated: [FontLanguage: String] = [:]
+        if let japanese = defaults.string(forKey: Key.legacyJapaneseSample), !japanese.isEmpty {
+            migrated[.japanese] = japanese
+        }
+        if let latin = defaults.string(forKey: Key.legacyLatinSample), !latin.isEmpty {
+            migrated[.latin] = latin
+        }
+        return migrated
+    }
+
+    private func storeSampleTexts() {
+        defaults.set(
+            Dictionary(uniqueKeysWithValues: sampleTexts.map { ($0.key.rawValue, $0.value) }),
+            forKey: Key.sampleTexts
+        )
     }
 
     // MARK: - Specimen colors
@@ -245,8 +279,10 @@ final class AppSettings: ObservableObject {
 
     private enum Key {
         static let previewSize = "previewSize"
-        static let japaneseSample = "japaneseSampleText"
-        static let latinSample = "latinSampleText"
+        static let sampleTexts = "sampleTexts"
+        /// Keys used before the sample texts became per-language.
+        static let legacyJapaneseSample = "japaneseSampleText"
+        static let legacyLatinSample = "latinSampleText"
         static let previewBackgroundColor = "previewBackgroundColor"
         static let previewTextColor = "previewTextColor"
         static let favoritesFirst = "favoritesFirst"
