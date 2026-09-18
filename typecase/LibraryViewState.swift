@@ -218,9 +218,19 @@ final class LibraryViewState: ObservableObject {
         // Before the first scan finishes there is nothing to reconcile against;
         // a restored selection must survive until the families arrive.
         guard !catalog.familyIDs.isEmpty else { return }
+        reconcileDestination(with: catalog)
         selection.formIntersection(catalog.familyIDs)
         if selection.isEmpty, let first = catalog.families.first?.id {
             selection = [first]
+        }
+    }
+
+    /// Keeps the sidebar destination valid when the tag it names disappears,
+    /// so the window never shows an invisible selection.
+    func reconcileDestination(with catalog: FontCatalog) {
+        guard !catalog.familyIDs.isEmpty else { return }
+        if case .tag(let tag) = librarySelection, !catalog.hasTag(tag) {
+            librarySelection = .section(.all)
         }
     }
 
@@ -258,6 +268,8 @@ final class LibraryViewState: ObservableObject {
             return catalog.familySystemScopes[family.id]?.contains(scope) ?? false
         case .folder(let folder):
             return catalog.familyFolderAncestors[family.id]?.contains(folder.standardizedFileURL) ?? false
+        case .tag(let tag):
+            return catalog.hasTag(tag, in: family)
         }
     }
 }

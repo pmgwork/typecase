@@ -115,6 +115,10 @@ struct ContentView: View {
         .onChange(of: catalog.familiesRevision) { _, _ in
             viewState.reconcile(with: catalog)
         }
+        .onChange(of: catalog.dataRevision) { _, _ in
+            // A tag can disappear when it is removed from its last font.
+            viewState.reconcileDestination(with: catalog)
+        }
         .onChange(of: viewState.librarySelection) { _, selection in
             settings.remember(location: selection)
         }
@@ -301,6 +305,8 @@ private struct Sidebar: View {
     @EnvironmentObject private var settings: AppSettings
     @AppStorage("systemScopesExpanded") private var systemScopesExpanded = true
     @State private var isDropTargeted = false
+    @State private var tagBeingRenamed: String?
+    @State private var renamedTag = ""
 
     /// The font service sections the settings leave visible.
     private var providerSections: [LibrarySection] {
@@ -378,13 +384,15 @@ private struct Sidebar: View {
             if settings.showTagsSection, !catalog.allTags.isEmpty {
                 Section {
                     ForEach(catalog.allTags, id: \.self) { tag in
-                        Button {
-                            viewState.librarySelection = .section(.all)
-                            viewState.searchText = tag
-                        } label: {
-                            SidebarLabel(title: tag, systemImage: "tag")
-                                .foregroundStyle(.primary)
-                        }
+                        SidebarLabel(title: tag, systemImage: "tag")
+                            .background(TableRowEmphasisConfigurator())
+                            .badge(selectedCount(for: .tag(tag)))
+                            .tag(LibrarySelection.tag(tag))
+                            .contextMenu {
+                                Button("Rename Tag…") { beginRenaming(tag) }
+                                Divider()
+                                Button("Delete Tag", role: .destructive) { deleteTag(tag) }
+                            }
                     }
                 } header: {
                     Text("Tags")
@@ -423,6 +431,13 @@ private struct Sidebar: View {
             return true
         } isTargeted: { targeted in
             isDropTargeted = targeted
+        }
+        .alert("Rename Tag", isPresented: renameTagAlertPresented) {
+            TextField("Name", text: $renamedTag)
+            Button("Rename") { commitTagRename() }
+            Button("Cancel", role: .cancel) { tagBeingRenamed = nil }
+        } message: {
+            Text("The tag is renamed on every font that uses it.")
         }
         .overlay {
             if isDropTargeted {
@@ -476,6 +491,34 @@ private struct Sidebar: View {
         guard viewState.librarySelection == selection else { return 0 }
         return catalog.fontCount(for: selection)
     }
+
+    private var renameTagAlertPresented: Binding<Bool> {
+        Binding(
+            get: { tagBeingRenamed != nil },
+            set: { if !$0 { tagBeingRenamed = nil } }
+        )
+    }
+
+    private func beginRenaming(_ tag: String) {
+        renamedTag = tag
+        tagBeingRenamed = tag
+    }
+
+    private func commitTagRename() {
+        guard let tag = tagBeingRenamed else { return }
+        tagBeingRenamed = nil
+        guard let newName = catalog.renameTag(tag, to: renamedTag) else { return }
+        if viewState.librarySelection == .tag(tag) {
+            viewState.librarySelection = .tag(newName)
+        }
+    }
+
+    private func deleteTag(_ tag: String) {
+        if viewState.librarySelection == .tag(tag) {
+            viewState.librarySelection = .section(.all)
+        }
+        catalog.deleteTag(tag)
+    }
 }
 
 private struct FontLibraryView: View {
@@ -526,6 +569,17 @@ private struct FontLibraryView: View {
                                     setEnabled(false, families: targets)
                                 }
                                 .disabled(!targets.contains(where: \.canDeactivate))
+
+                                Divider()
+
+                                Menu("Tags") {
+                                    if catalog.allTags.isEmpty {
+                                        Text("No Tags")
+                                    }
+                                    ForEach(catalog.allTags, id: \.self) { tag in
+                                        Toggle(tag, isOn: tagBinding(tag, families: targets))
+                                    }
+                                }
 
                                 Divider()
 
@@ -691,6 +745,7 @@ private struct FontLibraryView: View {
             }
         case .folder(let folder): return "No fonts in \(folder.lastPathComponent)"
         case .systemScope(let scope): return "No fonts for \(scope.title)"
+        case .tag(let tag): return "No fonts tagged “\(tag)”"
         }
     }
 
@@ -705,6 +760,7 @@ private struct FontLibraryView: View {
             }
         case .folder: return "This folder does not contain any supported font files."
         case .systemScope: return "No fonts were found in this installation scope."
+        case .tag: return "Assign the tag to a font from the inspector or the row’s context menu."
         }
     }
 
@@ -733,6 +789,23 @@ private struct FontLibraryView: View {
 
     private func activationTitle(_ action: String, count: Int) -> String {
         count > 1 ? "\(action) \(count) Fonts" : action
+    }
+
+    /// Toggles an existing tag on every targeted family; the menu shows a
+    /// checkmark only while all of them carry it.
+    private func tagBinding(_ tag: String, families: [FontFamily]) -> Binding<Bool> {
+        Binding(
+            get: { families.allSatisfy { catalog.hasTag(tag, in: $0) } },
+            set: { isOn in
+                for family in families {
+                    if isOn {
+                        catalog.addTag(tag, to: family)
+                    } else {
+                        catalog.removeTag(tag, from: family)
+                    }
+                }
+            }
+        )
     }
 
     private func toggleExpanded(_ family: FontFamily) {
@@ -1283,10 +1356,11 @@ private struct FontInspector: View {
     }
 
     private func tagsSection(for family: FontFamily) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
+        let tags = catalog.tags(for: family)
+        return VStack(alignment: .leading, spacing: 10) {
             Text("Tags")
                 .font(.headline)
-            ForEach(catalog.tags(for: family), id: \.self) { tag in
+            ForEach(tags, id: \.self) { tag in
                 HStack {
                     Label(tag, systemImage: "tag")
                     Spacer()
@@ -1300,13 +1374,34 @@ private struct FontInspector: View {
                 }
                 .font(.callout)
             }
-            TextField("Add tag", text: $newTag)
-                .textFieldStyle(.roundedBorder)
-                .onSubmit {
-                    catalog.addTag(newTag, to: family)
-                    newTag = ""
+            HStack(spacing: 6) {
+                TextField("Add tag", text: $newTag)
+                    .textFieldStyle(.roundedBorder)
+                    .onSubmit { addTag(to: family) }
+                Button {
+                    addTag(to: family)
+                } label: {
+                    Image(systemName: "plus")
+                        .frame(width: 18, height: 18)
                 }
+                .help("Add this tag to the font")
+                .disabled(trimmedNewTag.isEmpty)
+            }
         }
+        .onChange(of: family.id) { _, _ in
+            // Never carry a half-typed tag over to another font.
+            newTag = ""
+        }
+    }
+
+    private var trimmedNewTag: String {
+        newTag.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func addTag(to family: FontFamily) {
+        guard !trimmedNewTag.isEmpty else { return }
+        catalog.addTag(newTag, to: family)
+        newTag = ""
     }
 
     private func missingCharactersKey(for family: FontFamily) -> MissingCharactersKey {

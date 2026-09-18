@@ -272,12 +272,14 @@ enum LibrarySelection: Hashable {
     case section(LibrarySection)
     case systemScope(SystemFontScope)
     case folder(URL)
+    case tag(String)
 
     var icon: SourceIcon {
         switch self {
         case .section(let section): section.icon
         case .systemScope(let scope): scope.icon
         case .folder: .symbol("folder")
+        case .tag: .symbol("tag")
         }
     }
 }

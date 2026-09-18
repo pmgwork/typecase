@@ -213,6 +213,7 @@ final class AppSettings: ObservableObject {
             }
         case .systemScope: return showSystemSection
         case .folder: return true
+        case .tag: return showTagsSection
         }
     }
 
@@ -258,6 +259,7 @@ final class AppSettings: ObservableObject {
         switch location {
         case .section(let section): encoded = "section:\(section.rawValue)"
         case .systemScope(let scope): encoded = "scope:\(scope.rawValue)"
+        case .tag(let tag): encoded = "tag:\(tag)"
         case .folder: encoded = nil
         }
         guard let encoded, encoded != lastLocation else { return }
@@ -273,6 +275,7 @@ final class AppSettings: ObservableObject {
             let section = LibrarySection(rawValue: parts[1])
             return section.isKnown ? LibrarySelection.section(section) : nil
         case "scope": return SystemFontScope(rawValue: parts[1]).map(LibrarySelection.systemScope)
+        case "tag": return LibrarySelection.tag(parts[1])
         default: return nil
         }
     }
