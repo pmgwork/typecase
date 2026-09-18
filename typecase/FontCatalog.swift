@@ -13,6 +13,9 @@ final class FontCatalog: ObservableObject {
     @Published private(set) var folderTrees: [FontFolderNode] = []
     @Published private(set) var favorites: Set<String> = []
     @Published private(set) var userTags: [String: Set<String>] = [:]
+    /// Tag names the user created. A tag stays in the sidebar while no font
+    /// carries it, so it can be prepared before it is assigned.
+    @Published private(set) var knownTags: Set<String> = []
     @Published private(set) var categoryOverrides: [String: FontCategory] = [:]
     @Published private(set) var isLoading = false
     @Published var errorMessage: String?
@@ -59,7 +62,7 @@ final class FontCatalog: ObservableObject {
         favorites = Set(defaults.stringArray(forKey: "favoriteFamilies") ?? [])
         userTags = (defaults.dictionary(forKey: "familyTags") as? [String: [String]] ?? [:])
             .mapValues(Set.init)
-        migrateTags()
+        migrateTags(storedNames: defaults.stringArray(forKey: "tagNames") ?? [])
         categoryOverrides = (defaults.dictionary(forKey: "categoryOverrides") as? [String: String] ?? [:])
             .compactMapValues(FontCategory.init(rawValue:))
         activeManagedNames = Set(defaults.stringArray(forKey: "activeManagedFonts") ?? [])
@@ -95,42 +98,56 @@ final class FontCatalog: ObservableObject {
 
     // MARK: - Tags
 
-    /// The family's tags, in display order. Tag identity ignores case and
-    /// surrounding whitespace, so a name is stored once per family however it
-    /// was typed.
-    func tags(for family: FontFamily) -> [String] {
-        (userTags[family.id] ?? []).sorted {
-            $0.localizedStandardCompare($1) == .orderedAscending
-        }
-    }
-
     func hasTag(_ tag: String, in family: FontFamily) -> Bool {
         let key = Self.tagKey(tag)
         return userTags[family.id]?.contains { Self.tagKey($0) == key } ?? false
     }
 
-    /// Whether a loaded font carries the tag. A tag that no font uses any more
-    /// is not offered as a sidebar destination.
+    /// Whether the tag exists. A tag is an entity of its own, so it stays
+    /// valid while no font carries it.
     func hasTag(_ tag: String) -> Bool {
         let key = Self.tagKey(tag)
-        return allTags.contains { Self.tagKey($0) == key }
+        return knownTags.contains { Self.tagKey($0) == key }
     }
 
-    /// Adds a tag to the family. An existing name that differs only by case or
-    /// whitespace is reused, so its original spelling wins. Returns whether a
-    /// tag was actually added.
+    /// Creates a tag without assigning it, so it can be prepared in the
+    /// sidebar before it is used. An existing name that differs only by case
+    /// or whitespace is reused. Returns the stored name, or nil when the name
+    /// is empty.
+    @discardableResult
+    func createTag(_ tag: String) -> String? {
+        guard let normalized = Self.normalizedTag(tag) else { return nil }
+        let key = Self.tagKey(normalized)
+        let canonical = canonicalTag(forKey: key) ?? normalized
+        guard !knownTags.contains(canonical) else { return canonical }
+        knownTags.insert(canonical)
+        saveTags()
+        return canonical
+    }
+
+    /// Adds a tag to the family, creating the tag if it does not exist yet.
+    /// Returns whether anything changed.
     @discardableResult
     func addTag(_ tag: String, to family: FontFamily) -> Bool {
         guard let normalized = Self.normalizedTag(tag) else { return false }
         let key = Self.tagKey(normalized)
-        guard !(userTags[family.id]?.contains(where: { Self.tagKey($0) == key }) ?? false) else {
-            return false
+        let canonical = canonicalTag(forKey: key) ?? normalized
+        var didChange = false
+        if !knownTags.contains(canonical) {
+            knownTags.insert(canonical)
+            didChange = true
         }
-        userTags[family.id, default: []].insert(canonicalTag(forKey: key) ?? normalized)
+        if !(userTags[family.id]?.contains(where: { Self.tagKey($0) == key }) ?? false) {
+            userTags[family.id, default: []].insert(canonical)
+            didChange = true
+        }
+        guard didChange else { return false }
         saveTags()
         return true
     }
 
+    /// Removes the tag from the family. The tag itself stays in the sidebar,
+    /// where it can be renamed or deleted.
     func removeTag(_ tag: String, from family: FontFamily) {
         let key = Self.tagKey(tag)
         guard let tags = userTags[family.id],
@@ -144,10 +161,15 @@ final class FontCatalog: ObservableObject {
         saveTags()
     }
 
-    /// Removes the tag from every family that carries it.
+    /// Removes the tag from the sidebar and from every family that carries it.
     func deleteTag(_ tag: String) {
         let key = Self.tagKey(tag)
         var didChange = false
+        let knownMatches = knownTags.filter { Self.tagKey($0) == key }
+        if !knownMatches.isEmpty {
+            knownTags.subtract(knownMatches)
+            didChange = true
+        }
         for (familyID, tags) in userTags where tags.contains(where: { Self.tagKey($0) == key }) {
             let remaining = tags.filter { Self.tagKey($0) != key }
             if remaining.isEmpty {
@@ -161,15 +183,21 @@ final class FontCatalog: ObservableObject {
         saveTags()
     }
 
-    /// Renames the tag on every family that carries it and returns the stored
-    /// name, or nil when there was nothing to rename. Renaming a tag to one
-    /// that already exists merges the two.
+    /// Renames the tag in the sidebar and on every family that carries it and
+    /// returns the stored name, or nil when there was nothing to rename.
+    /// Renaming a tag to one that already exists merges the two.
     @discardableResult
     func renameTag(_ tag: String, to newName: String) -> String? {
         guard let normalized = Self.normalizedTag(newName) else { return nil }
         let oldKey = Self.tagKey(tag)
         let newKey = Self.tagKey(normalized)
         var didChange = false
+
+        let knownMatches = knownTags.filter { Self.tagKey($0) == oldKey }
+        if !knownMatches.isEmpty {
+            knownTags.subtract(knownMatches)
+            didChange = true
+        }
         for (familyID, tags) in userTags where tags.contains(where: { Self.tagKey($0) == oldKey }) {
             var updated = tags.filter { Self.tagKey($0) != oldKey }
             if !updated.contains(where: { Self.tagKey($0) == newKey }) {
@@ -177,6 +205,9 @@ final class FontCatalog: ObservableObject {
             }
             userTags[familyID] = updated
             didChange = true
+        }
+        if didChange, !knownTags.contains(where: { Self.tagKey($0) == newKey }) {
+            knownTags.insert(normalized)
         }
         guard didChange else { return nil }
         saveTags()
@@ -198,22 +229,31 @@ final class FontCatalog: ObservableObject {
     /// The spelling already stored for a tag identity, so adding "logo" while
     /// "Logo" exists keeps the existing name.
     private func canonicalTag(forKey key: String) -> String? {
+        if let match = knownTags.first(where: { Self.tagKey($0) == key }) { return match }
         for tags in userTags.values {
             if let match = tags.first(where: { Self.tagKey($0) == key }) { return match }
         }
         return nil
     }
 
-    /// Restores stored tags to one spelling per name and drops empty entries.
-    /// Names that differ only by case or whitespace are merged, keeping the
-    /// most used spelling. Runs once at launch.
-    private func migrateTags() {
+    /// Restores stored tags to one spelling per name, adds tags older versions
+    /// only kept per font to the tag list, and drops empty entries. Names that
+    /// differ only by case or whitespace are merged, keeping the most used
+    /// spelling. Runs once at launch.
+    private func migrateTags(storedNames: [String]) {
         var usage: [String: [String: Int]] = [:]
-        var normalized: [String: Set<String>] = [:]
+        var known: Set<String> = []
+        for raw in storedNames {
+            guard let tag = Self.normalizedTag(raw) else { continue }
+            known.insert(tag)
+            usage[Self.tagKey(tag), default: [:]][tag, default: 0] += 1
+        }
+        var normalizedFamilies: [String: Set<String>] = [:]
         for (familyID, tags) in userTags {
             let cleaned = Set(tags.compactMap(Self.normalizedTag))
             guard !cleaned.isEmpty else { continue }
-            normalized[familyID] = cleaned
+            normalizedFamilies[familyID] = cleaned
+            known.formUnion(cleaned)
             for tag in cleaned {
                 usage[Self.tagKey(tag), default: [:]][tag, default: 0] += 1
             }
@@ -230,31 +270,32 @@ final class FontCatalog: ObservableObject {
                 .first?.key
         }
 
-        let migrated = normalized.mapValues { tags in
+        let migratedFamilies = normalizedFamilies.mapValues { tags in
             Set(tags.map { canonical[Self.tagKey($0)] ?? $0 })
         }
-        guard migrated != userTags else { return }
-        userTags = migrated
-        defaults.set(userTags.mapValues(Array.init), forKey: "familyTags")
+        let migratedKnown = Set(known.map { canonical[Self.tagKey($0)] ?? $0 })
+
+        if migratedFamilies != userTags {
+            userTags = migratedFamilies
+            defaults.set(userTags.mapValues(Array.init), forKey: "familyTags")
+        }
+        if migratedKnown != knownTags {
+            knownTags = migratedKnown
+            defaults.set(Array(knownTags), forKey: "tagNames")
+        }
     }
 
     private func saveTags() {
         defaults.set(userTags.mapValues(Array.init), forKey: "familyTags")
+        defaults.set(Array(knownTags), forKey: "tagNames")
         rebuildAllTags()
         dataRevision += 1
     }
 
-    /// Rebuilds the sidebar's tag list from the fonts that are currently
-    /// loaded, so a tag disappears together with its last font and comes back
-    /// if the folder is added again.
+    /// The sidebar's tag list, sorted for display. Tags are user data, so an
+    /// unassigned tag keeps its row until it is deleted.
     private func rebuildAllTags() {
-        var namesByKey: [String: String] = [:]
-        for (familyID, tags) in userTags where familyIDs.contains(familyID) {
-            for tag in tags where namesByKey[Self.tagKey(tag)] == nil {
-                namesByKey[Self.tagKey(tag)] = tag
-            }
-        }
-        allTags = namesByKey.values.sorted {
+        allTags = knownTags.sorted {
             $0.localizedStandardCompare($1) == .orderedAscending
         }
     }
@@ -718,7 +759,13 @@ final class FontCatalog: ObservableObject {
     /// The characters of `text` the family's preview face cannot display.
     func missingCharacters(in text: String, for family: FontFamily) async -> [String] {
         guard let face = family.previewFace else { return [] }
-        return await coverage.missingCharacters(
+        return await missingCharacters(in: text, for: face)
+    }
+
+    /// The characters of `text` the face cannot display. The family's version
+    /// checks the preview face; the PlayGround checks the style a block uses.
+    func missingCharacters(in text: String, for face: FontFace) async -> [String] {
+        await coverage.missingCharacters(
             postScriptName: face.postScriptName,
             fileURL: face.fileURL,
             text: text
@@ -812,7 +859,6 @@ final class FontCatalog: ObservableObject {
         familySystemScopes = scopes
         familyFolderAncestors = ancestors
         systemFontCount = systemCount
-        rebuildAllTags()
     }
 
     private static func systemScopes(for face: FontFace, home: URL, allUsers: URL) -> Set<SystemFontScope> {

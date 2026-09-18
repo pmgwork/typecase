@@ -4,6 +4,8 @@ import SwiftUI
 struct ContentView: View {
     @EnvironmentObject private var catalog: FontCatalog
     @EnvironmentObject private var settings: AppSettings
+    @EnvironmentObject private var playground: PlaygroundStore
+    @Environment(\.openWindow) private var openWindow
     @StateObject private var viewState = LibraryViewState()
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
     @State private var inspectorVisible = true
@@ -50,6 +52,20 @@ struct ContentView: View {
 
             // On macOS, confirmationAction is the trailing toolbar region;
             // automatic and primaryAction items can remain on the leading side.
+            ToolbarItem(placement: .confirmationAction) {
+                Button {
+                    playground.use(
+                        viewState.selectedFamilies(catalog: catalog),
+                        text: viewState.previewText,
+                        size: settings.previewSize
+                    )
+                    openWindow(id: PlaygroundWindow.id)
+                } label: {
+                    Label("PlayGround", systemImage: "text.word.spacing")
+                }
+                .help("Add the selected fonts to the PlayGround")
+            }
+
             ToolbarItem(placement: .confirmationAction) {
                 Menu {
                     Picker("Category", selection: $viewState.category) {
@@ -304,9 +320,16 @@ private struct Sidebar: View {
     @ObservedObject var viewState: LibraryViewState
     @EnvironmentObject private var settings: AppSettings
     @AppStorage("systemScopesExpanded") private var systemScopesExpanded = true
+    @AppStorage("foldersExpanded") private var foldersExpanded = true
+    @AppStorage("tagsExpanded") private var tagsExpanded = true
     @State private var isDropTargeted = false
+    @State private var foldersHeaderHovered = false
+    @State private var tagsHeaderHovered = false
+    @State private var isAddingTag = false
+    @State private var newTagName = ""
+    @FocusState private var newTagNameFocused: Bool
     @State private var tagBeingRenamed: String?
-    @State private var renamedTag = ""
+    @State private var renamedTagName = ""
 
     /// The font service sections the settings leave visible.
     private var providerSections: [LibrarySection] {
@@ -336,31 +359,33 @@ private struct Sidebar: View {
             }
 
             Section {
-                if catalog.folders.isEmpty {
-                    SidebarLabel(title: "Drop folders here", systemImage: "plus")
-                        .foregroundStyle(.secondary)
-                        .selectionDisabled()
-                } else {
-                    OutlineGroup(catalog.folderTrees, children: \.children) { node in
-                        SidebarLabel(title: node.url.lastPathComponent, systemImage: "folder")
-                            .lineLimit(1)
-                            .background(TableRowEmphasisConfigurator())
-                            .badge(selectedCount(for: .folder(node.url)))
-                            .tag(LibrarySelection.folder(node.url))
-                            .help(node.url.path)
-                            .contextMenu {
-                                Button("Show in Finder") { catalog.revealFolder(node.url) }
-                                if catalog.folders.contains(where: { $0.standardizedFileURL == node.url.standardizedFileURL }) {
-                                    Divider()
-                                    Button("Remove", role: .destructive) {
-                                        if case .folder(let selected) = viewState.librarySelection,
-                                           selected.isContained(in: node.url) {
-                                            viewState.librarySelection = .section(.local)
+                if foldersExpanded {
+                    if catalog.folders.isEmpty {
+                        SidebarLabel(title: "Drop folders here", systemImage: "plus")
+                            .foregroundStyle(.secondary)
+                            .selectionDisabled()
+                    } else {
+                        OutlineGroup(catalog.folderTrees, children: \.children) { node in
+                            SidebarLabel(title: node.url.lastPathComponent, systemImage: "folder")
+                                .lineLimit(1)
+                                .background(TableRowEmphasisConfigurator())
+                                .badge(selectedCount(for: .folder(node.url)))
+                                .tag(LibrarySelection.folder(node.url))
+                                .help(node.url.path)
+                                .contextMenu {
+                                    Button("Show in Finder") { catalog.revealFolder(node.url) }
+                                    if catalog.folders.contains(where: { $0.standardizedFileURL == node.url.standardizedFileURL }) {
+                                        Divider()
+                                        Button("Remove", role: .destructive) {
+                                            if case .folder(let selected) = viewState.librarySelection,
+                                               selected.isContained(in: node.url) {
+                                                viewState.librarySelection = .section(.local)
+                                            }
+                                            catalog.removeFolder(node.url)
                                         }
-                                        catalog.removeFolder(node.url)
                                     }
                                 }
-                            }
+                        }
                     }
                 }
             } header: {
@@ -368,35 +393,61 @@ private struct Sidebar: View {
                     Text("Folders")
                         .foregroundStyle(Color(nsColor: .secondaryLabelColor))
                     Spacer(minLength: 0)
-                    Button {
-                        catalog.addFolder { url in viewState.librarySelection = .folder(url) }
-                    } label: {
-                        Image(systemName: "folder.badge.plus")
+                    headerControls(isHovered: foldersHeaderHovered) {
+                        Button {
+                            catalog.addFolder { url in viewState.librarySelection = .folder(url) }
+                        } label: {
+                            Image(systemName: "folder.badge.plus")
+                        }
+                        .help("Add a font folder")
+                        .accessibilityLabel("Add a font folder")
+
+                        disclosureButton(isExpanded: $foldersExpanded, title: "Folders")
                     }
-                    .buttonStyle(.borderless)
-                    .controlSize(.small)
-                    .help("Add a font folder")
-                    .accessibilityLabel("Add a font folder")
                 }
                 .padding(.trailing, 12)
+                .contentShape(Rectangle())
+                .onHover { foldersHeaderHovered = $0 }
             }
 
-            if settings.showTagsSection, !catalog.allTags.isEmpty {
+            if settings.showTagsSection {
                 Section {
-                    ForEach(catalog.allTags, id: \.self) { tag in
-                        SidebarLabel(title: tag, systemImage: "tag")
-                            .background(TableRowEmphasisConfigurator())
-                            .badge(selectedCount(for: .tag(tag)))
-                            .tag(LibrarySelection.tag(tag))
-                            .contextMenu {
-                                Button("Rename Tag…") { beginRenaming(tag) }
-                                Divider()
-                                Button("Delete Tag", role: .destructive) { deleteTag(tag) }
-                            }
+                    if tagsExpanded {
+                        ForEach(catalog.allTags, id: \.self) { tag in
+                            SidebarLabel(title: tag, systemImage: "tag")
+                                .background(TableRowEmphasisConfigurator())
+                                .badge(selectedCount(for: .tag(tag)))
+                                .tag(LibrarySelection.tag(tag))
+                                .contextMenu {
+                                    Button("Rename Tag…") { beginRenaming(tag) }
+                                    Divider()
+                                    Button("Delete Tag", role: .destructive) { deleteTag(tag) }
+                                }
+                        }
                     }
                 } header: {
-                    Text("Tags")
-                        .foregroundStyle(Color(nsColor: .secondaryLabelColor))
+                    HStack(spacing: 8) {
+                        Text("Tags")
+                            .foregroundStyle(Color(nsColor: .secondaryLabelColor))
+                        Spacer(minLength: 0)
+                        headerControls(isHovered: tagsHeaderHovered) {
+                            Button {
+                                beginCreatingTag()
+                            } label: {
+                                Image(systemName: "plus")
+                            }
+                            .help("Add a tag")
+                            .accessibilityLabel("Add a tag")
+                            .popover(isPresented: $isAddingTag, arrowEdge: .top) {
+                                addTagForm
+                            }
+
+                            disclosureButton(isExpanded: $tagsExpanded, title: "Tags")
+                        }
+                    }
+                    .padding(.trailing, 12)
+                    .contentShape(Rectangle())
+                    .onHover { tagsHeaderHovered = $0 }
                 }
             }
         }
@@ -433,7 +484,7 @@ private struct Sidebar: View {
             isDropTargeted = targeted
         }
         .alert("Rename Tag", isPresented: renameTagAlertPresented) {
-            TextField("Name", text: $renamedTag)
+            TextField("Name", text: $renamedTagName)
             Button("Rename") { commitTagRename() }
             Button("Cancel", role: .cancel) { tagBeingRenamed = nil }
         } message: {
@@ -492,6 +543,63 @@ private struct Sidebar: View {
         return catalog.fontCount(for: selection)
     }
 
+    private func headerControls<Content: View>(
+        isHovered: Bool,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        HStack(spacing: 8) {
+            content()
+        }
+        .buttonStyle(.borderless)
+        .controlSize(.small)
+        .opacity(isHovered ? 1 : 0)
+        .allowsHitTesting(isHovered)
+    }
+
+    private func disclosureButton(
+        isExpanded: Binding<Bool>,
+        title: String
+    ) -> some View {
+        Button {
+            withAnimation(.easeInOut(duration: 0.18)) {
+                isExpanded.wrappedValue.toggle()
+            }
+        } label: {
+            Image(systemName: isExpanded.wrappedValue ? "chevron.down" : "chevron.right")
+        }
+        .help(isExpanded.wrappedValue ? "Collapse \(title)" : "Expand \(title)")
+        .accessibilityLabel(isExpanded.wrappedValue ? "Collapse \(title)" : "Expand \(title)")
+    }
+
+    private var addTagForm: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Name")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                TextField("e.g. serif, display, favorites", text: $newTagName)
+                    .textFieldStyle(.roundedBorder)
+                    .focused($newTagNameFocused)
+            }
+
+            HStack {
+                Button("Cancel") { isAddingTag = false }
+                    .keyboardShortcut(.cancelAction)
+                Spacer(minLength: 8)
+                Button("Add") { addTag() }
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(trimmedNewTagName.isEmpty)
+            }
+        }
+        .padding(16)
+        .frame(width: 280)
+        .defaultFocus($newTagNameFocused, true)
+    }
+
+    private var trimmedNewTagName: String {
+        newTagName.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     private var renameTagAlertPresented: Binding<Bool> {
         Binding(
             get: { tagBeingRenamed != nil },
@@ -499,15 +607,26 @@ private struct Sidebar: View {
         )
     }
 
+    private func beginCreatingTag() {
+        newTagName = ""
+        isAddingTag = true
+    }
+
     private func beginRenaming(_ tag: String) {
-        renamedTag = tag
+        renamedTagName = tag
         tagBeingRenamed = tag
+    }
+
+    private func addTag() {
+        guard !trimmedNewTagName.isEmpty else { return }
+        catalog.createTag(newTagName)
+        isAddingTag = false
     }
 
     private func commitTagRename() {
         guard let tag = tagBeingRenamed else { return }
         tagBeingRenamed = nil
-        guard let newName = catalog.renameTag(tag, to: renamedTag) else { return }
+        guard let newName = catalog.renameTag(tag, to: renamedTagName) else { return }
         if viewState.librarySelection == .tag(tag) {
             viewState.librarySelection = .tag(newName)
         }
@@ -760,7 +879,7 @@ private struct FontLibraryView: View {
             }
         case .folder: return "This folder does not contain any supported font files."
         case .systemScope: return "No fonts were found in this installation scope."
-        case .tag: return "Assign the tag to a font from the inspector or the row’s context menu."
+        case .tag: return "Assign the tag to a font from the row’s context menu, or delete the tag in the sidebar."
         }
     }
 
@@ -983,8 +1102,9 @@ private struct FontFamilyRow: View, Equatable {
 
 /// Uses AppKit's native selection paint: gray in the sidebar, emphasized in
 /// the font list. While a custom canvas color is set the system paint is
-/// suppressed, so the row's own veil is the only selection mark.
-private struct TableRowEmphasisConfigurator: NSViewRepresentable {
+/// suppressed, so the row's own veil is the only selection mark. The PlayGround
+/// canvas reuses the same behavior for its blocks.
+struct TableRowEmphasisConfigurator: NSViewRepresentable {
     var isEmphasized = false
     var hidesSelectionHighlight = false
 
@@ -1081,7 +1201,6 @@ private struct FontInspector: View {
     @ObservedObject var viewState: LibraryViewState
     @EnvironmentObject private var settings: AppSettings
     @Binding var comparisonVisible: Bool
-    @State private var newTag = ""
     @State private var missingCharacters: [String] = []
     @State private var variableAxes: VariableAxesState?
     @State private var metadata: FontNameTable.Metadata?
@@ -1170,8 +1289,6 @@ private struct FontInspector: View {
                     Divider()
 
                     classificationSection(for: family)
-
-                    tagsSection(for: family)
                 }
                 .padding(20)
             }
@@ -1355,55 +1472,6 @@ private struct FontInspector: View {
         value.rounded() == value ? String(Int(value)) : String(format: "%.1f", value)
     }
 
-    private func tagsSection(for family: FontFamily) -> some View {
-        let tags = catalog.tags(for: family)
-        return VStack(alignment: .leading, spacing: 10) {
-            Text("Tags")
-                .font(.headline)
-            ForEach(tags, id: \.self) { tag in
-                HStack {
-                    Label(tag, systemImage: "tag")
-                    Spacer()
-                    Button {
-                        catalog.removeTag(tag, from: family)
-                    } label: {
-                        Image(systemName: "minus.circle")
-                    }
-                    .buttonStyle(.borderless)
-                    .help("Remove tag")
-                }
-                .font(.callout)
-            }
-            HStack(spacing: 6) {
-                TextField("Add tag", text: $newTag)
-                    .textFieldStyle(.roundedBorder)
-                    .onSubmit { addTag(to: family) }
-                Button {
-                    addTag(to: family)
-                } label: {
-                    Image(systemName: "plus")
-                        .frame(width: 18, height: 18)
-                }
-                .help("Add this tag to the font")
-                .disabled(trimmedNewTag.isEmpty)
-            }
-        }
-        .onChange(of: family.id) { _, _ in
-            // Never carry a half-typed tag over to another font.
-            newTag = ""
-        }
-    }
-
-    private var trimmedNewTag: String {
-        newTag.trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
-    private func addTag(to family: FontFamily) {
-        guard !trimmedNewTag.isEmpty else { return }
-        catalog.addTag(newTag, to: family)
-        newTag = ""
-    }
-
     private func missingCharactersKey(for family: FontFamily) -> MissingCharactersKey {
         MissingCharactersKey(familyID: family.id, text: previewText(for: family))
     }
@@ -1521,6 +1589,7 @@ private struct ComparisonView: View {
     ContentView()
         .environmentObject(FontCatalog())
         .environmentObject(AppSettings())
+        .environmentObject(PlaygroundStore())
 }
 
 /// Reports the hosting `NSWindow` so menu commands can be routed to the key window.
@@ -1693,6 +1762,10 @@ private struct PreviewTextEditor: View {
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
         .frame(maxWidth: 720)
+        .background {
+            RoundedRectangle(cornerRadius: 14)
+                .fill(Color(nsColor: .windowBackgroundColor).opacity(0.75))
+        }
         .glassEffect(.regular, in: .rect(cornerRadius: 14))
     }
 
