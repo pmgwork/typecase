@@ -178,6 +178,15 @@ nonisolated struct FontFamily: Identifiable, Hashable, Sendable {
     var previewFace: FontFace? {
         faces.first(where: { $0.styleName.localizedCaseInsensitiveContains("regular") }) ?? faces.first
     }
+    /// The face a new mixed pair starts from: the Regular style, or the
+    /// weight closest to 400 when no style is named Regular. Hiragino Sans
+    /// names its styles W0–W9, so this picks W4 instead of the lightest.
+    var defaultMixedFace: FontFace? {
+        if let regular = faces.first(where: { $0.styleName.localizedCaseInsensitiveContains("regular") }) {
+            return regular
+        }
+        return faces.min { abs($0.weight - 400) < abs($1.weight - 400) }
+    }
 }
 
 nonisolated struct FontFolderNode: Identifiable, Hashable, Sendable {
@@ -197,6 +206,8 @@ nonisolated struct LibrarySection: Hashable, Identifiable, Sendable {
     static let favorites = LibrarySection(rawValue: "favorites")
     static let system = LibrarySection(rawValue: "system")
     static let local = LibrarySection(rawValue: "local")
+    /// The saved Japanese + Latin combinations.
+    static let mixed = LibrarySection(rawValue: "mixed")
 
     static func provider(_ provider: FontProvider) -> LibrarySection {
         LibrarySection(rawValue: provider.id)
@@ -209,7 +220,7 @@ nonisolated struct LibrarySection: Hashable, Identifiable, Sendable {
     /// Whether this raw value names a section this build can show. A persisted
     /// selection from an older or newer build must not become a blank row.
     var isKnown: Bool {
-        provider != nil || [.all, .favorites, .system, .local].contains(self)
+        provider != nil || [.all, .favorites, .system, .local, .mixed].contains(self)
     }
 
     var title: String {
@@ -219,6 +230,7 @@ nonisolated struct LibrarySection: Hashable, Identifiable, Sendable {
         case .favorites: return "Favorites"
         case .system: return "System Fonts"
         case .local: return "Local Library"
+        case .mixed: return "Mixed Fonts"
         default: return rawValue
         }
     }
@@ -230,6 +242,7 @@ nonisolated struct LibrarySection: Hashable, Identifiable, Sendable {
         case .favorites: return .symbol("star")
         case .system: return .symbol("macbook")
         case .local: return .symbol("folder")
+        case .mixed: return .symbol("rectangle.on.rectangle")
         default: return .symbol("textformat")
         }
     }

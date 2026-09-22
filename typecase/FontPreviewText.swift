@@ -47,7 +47,7 @@ struct FontPreviewText: View {
 
 /// Applies a fixed text color only when one was chosen; without one the text
 /// keeps following the system, including the list's selection emphasis.
-private struct SpecimenTextColor: ViewModifier {
+struct SpecimenTextColor: ViewModifier {
     let color: Color?
 
     func body(content: Content) -> some View {

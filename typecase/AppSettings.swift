@@ -47,6 +47,9 @@ final class AppSettings: ObservableObject {
     @Published var showTagsSection: Bool {
         didSet { defaults.set(showTagsSection, forKey: Key.showTagsSection) }
     }
+    @Published var showMixedSection: Bool {
+        didSet { defaults.set(showMixedSection, forKey: Key.showMixedSection) }
+    }
     /// Per-face variable-axis adjustments, keyed by PostScript name and the
     /// four-character axis tag.
     @Published private(set) var variableAxes: [String: [String: Double]] {
@@ -75,6 +78,7 @@ final class AppSettings: ObservableObject {
         showLocalSection = defaults.object(forKey: Key.showLocalSection) as? Bool ?? true
         providerSections = Self.loadProviderSections(defaults: defaults)
         showTagsSection = defaults.object(forKey: Key.showTagsSection) as? Bool ?? true
+        showMixedSection = defaults.object(forKey: Key.showMixedSection) as? Bool ?? true
         variableAxes = (defaults.dictionary(forKey: Key.variableAxes) as? [String: [String: Double]]) ?? [:]
         lastSelection = defaults.stringArray(forKey: Key.lastSelection) ?? []
         lastLocation = defaults.string(forKey: Key.lastLocation) ?? ""
@@ -107,6 +111,19 @@ final class AppSettings: ObservableObject {
         let trimmed = entered.trimmingCharacters(in: .whitespacesAndNewlines)
         if !trimmed.isEmpty { return entered }
         return sample(for: family.previewLanguage)
+    }
+
+    /// The built-in mixed specimen, shown while the preview text field is
+    /// empty. It mixes Japanese, English, digits, and symbols so each part's
+    /// width and balance can be compared.
+    static let mixedSampleDefault = "Typography は、文字を読むための技術であり、Design の一部でもあります。日本語・English・0123456789 に加えて、「」『』（）［］！？：；、。& / + − = % ¥ $ @ # などの記号が混ざると、Font ごとの字幅やバランスを確認しやすくなります。"
+
+    /// The text a mixed specimen shows: the entered text, or the mixed sample
+    /// while the field is empty.
+    func effectiveMixedText(entered: String) -> String {
+        let trimmed = entered.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed.isEmpty { return entered }
+        return Self.mixedSampleDefault
     }
 
     func resetSampleText() {
@@ -192,6 +209,7 @@ final class AppSettings: ObservableObject {
         var sections: [LibrarySection] = []
         if showAllSection { sections.append(.all) }
         if showFavoritesSection { sections.append(.favorites) }
+        if showMixedSection { sections.append(.mixed) }
         if showSystemSection { sections.append(.system) }
         if showLocalSection { sections.append(.local) }
         for provider in FontProviderRegistry.all where isProviderSectionVisible(provider.id) {
@@ -209,6 +227,7 @@ final class AppSettings: ObservableObject {
             case .favorites: return showFavoritesSection
             case .system: return showSystemSection
             case .local: return showLocalSection
+            case .mixed: return showMixedSection
             default: return false
             }
         case .systemScope: return showSystemSection
@@ -295,6 +314,7 @@ final class AppSettings: ObservableObject {
         static let showLocalSection = "showLocalSection"
         static let providerSections = "providerSections"
         static let showTagsSection = "showTagsSection"
+        static let showMixedSection = "showMixedSection"
         static let variableAxes = "variableAxes"
         static let lastSelection = "lastSelection"
         static let lastLocation = "lastLocation"

@@ -12,6 +12,8 @@ final class FontCatalog: ObservableObject {
     @Published private(set) var folders: [URL] = []
     @Published private(set) var folderTrees: [FontFolderNode] = []
     @Published private(set) var favorites: Set<String> = []
+    /// Saved Japanese + Latin combinations, in the order they were created.
+    @Published private(set) var mixedPairs: [FontPair] = []
     @Published private(set) var userTags: [String: Set<String>] = [:]
     /// Tag names the user created. A tag stays in the sidebar while no font
     /// carries it, so it can be prepared before it is assigned.
@@ -66,6 +68,7 @@ final class FontCatalog: ObservableObject {
         categoryOverrides = (defaults.dictionary(forKey: "categoryOverrides") as? [String: String] ?? [:])
             .compactMapValues(FontCategory.init(rawValue:))
         activeManagedNames = Set(defaults.stringArray(forKey: "activeManagedFonts") ?? [])
+        mixedPairs = Self.loadMixedPairs(defaults: defaults)
         rebuildAllTags()
         folderMonitor.onChanges = { [weak self] in self?.refresh() }
     }
@@ -313,11 +316,149 @@ final class FontCatalog: ObservableObject {
         dataRevision += 1
     }
 
+    // MARK: - Mixed pairs
+
+    /// The pair a list selection names, or nil when the selection is not a
+    /// single pair.
+    func mixedPair(for selection: Set<FontFamily.ID>) -> FontPair? {
+        guard selection.count == 1, let id = selection.first, FontPair.isSelectionID(id) else { return nil }
+        return mixedPairs.first { $0.selectionID == id }
+    }
+
+    /// The one Japanese and one Latin family a new pair can be built from, or
+    /// nil while the families do not supply both sides.
+    func mixedPairSources(in families: [FontFamily]) -> (japanese: FontFamily, latin: FontFamily)? {
+        guard let japanese = families.first(where: \.usesJapaneseScript),
+              let latin = families.first(where: { !$0.usesJapaneseScript }) else { return nil }
+        return (japanese, latin)
+    }
+
+    /// The families that can fill one part of a specimen, in name order. The
+    /// Japanese part lists the Japanese fonts; every part that draws letters,
+    /// digits, or symbols can take any face. Families without a face cannot be
+    /// referenced, so they are left out.
+    func families(for script: MixedScript) -> [FontFamily] {
+        families.filter { family in
+            guard family.previewFace != nil else { return false }
+            switch script {
+            case .japanese:
+                return family.usesJapaneseScript
+            case .latin, .numbers, .symbols:
+                return true
+            }
+        }
+    }
+
+    /// Saves a mixed-font combination. Returns nil when the Japanese or Latin
+    /// family has no face to reference; the other parts are optional.
+    @discardableResult
+    func addMixedPair(_ families: [MixedScript: FontFamily]) -> FontPair? {
+        var references: [MixedScript: FontFaceReference] = [:]
+        for (script, family) in families {
+            guard let reference = FontFaceReference(family: family) else {
+                if script == .japanese || script == .latin { return nil }
+                continue
+            }
+            references[script] = reference
+        }
+        return addMixedPair(references: references)
+    }
+
+    /// Saves a mixed-font combination from explicit faces. Returns nil when
+    /// the Japanese or Latin face is missing.
+    @discardableResult
+    func addMixedPair(references: [MixedScript: FontFaceReference]) -> FontPair? {
+        guard let japanese = references[.japanese], let latin = references[.latin] else { return nil }
+        let pair = FontPair(
+            japanese: japanese,
+            latin: latin,
+            numbers: references[.numbers],
+            symbols: references[.symbols]
+        )
+        mixedPairs.append(pair)
+        saveMixedPairs()
+        return pair
+    }
+
+    /// The fonts a new pair starts with: the macOS standard for each part of
+    /// the mix, as far as it is installed. Each part starts from the family's
+    /// default mixed face (Regular, or W4 for Hiragino Sans).
+    func defaultMixedPairFamilies() -> [MixedScript: FontFaceReference] {
+        var result: [MixedScript: FontFaceReference] = [:]
+        for script in MixedScript.allCases {
+            guard let family = family(matching: Self.defaultMixedFontNames[script] ?? []),
+                  let face = family.defaultMixedFace else { continue }
+            result[script] = FontFaceReference(familyID: family.id, postScriptName: face.postScriptName)
+        }
+        return result
+    }
+
+    /// The first installed family whose name matches one of the candidates,
+    /// comparing both the family id and the names the library shows.
+    private func family(matching candidates: [String]) -> FontFamily? {
+        for candidate in candidates {
+            let folded = Self.fold(candidate)
+            if let family = familyByID[folded] { return family }
+            if let family = families.first(where: {
+                Self.fold($0.localizedName) == folded || Self.fold($0.name) == folded
+            }) { return family }
+        }
+        return nil
+    }
+
+    private static func fold(_ name: String) -> String {
+        name.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+    }
+
+    /// The macOS fonts a new pair starts from, per part of the mix.
+    private static let defaultMixedFontNames: [MixedScript: [String]] = [
+        .japanese: [
+            "Hiragino Sans", "ヒラギノ角ゴシック",
+            "Hiragino Kaku Gothic ProN", "ヒラギノ角ゴ ProN",
+            "YuGothic", "游ゴシック体",
+        ],
+        .latin: ["Helvetica Neue", "Helvetica", "SF Pro Text"],
+        .numbers: ["Helvetica Neue", "Helvetica", "SF Pro Text"],
+        .symbols: ["Helvetica Neue", "Helvetica", "Apple Symbols", "SF Pro Text"],
+    ]
+
+    func removeMixedPair(_ pair: FontPair) {
+        mixedPairs.removeAll { $0.id == pair.id }
+        saveMixedPairs()
+    }
+
+    /// Whether a saved reference still resolves to a drawable face.
+    func canResolve(_ reference: FontFaceReference) -> Bool {
+        FontResolver.shared.isResolvable(
+            postScriptName: reference.postScriptName,
+            fileURL: face(for: reference)?.fileURL
+        )
+    }
+
+    private func saveMixedPairs() {
+        defaults.set(try? JSONEncoder().encode(mixedPairs), forKey: Self.mixedPairsKey)
+        dataRevision += 1
+    }
+
+    private static func loadMixedPairs(defaults: UserDefaults) -> [FontPair] {
+        guard let data = defaults.data(forKey: mixedPairsKey) else { return [] }
+        return (try? JSONDecoder().decode([FontPair].self, from: data)) ?? []
+    }
+
+    private static let mixedPairsKey = "mixedPairs"
+
     // MARK: - Selection helpers
 
     func family(for selection: Set<FontFamily.ID>) -> FontFamily? {
         guard selection.count == 1, let id = selection.first else { return nil }
         return familyByID[id]
+    }
+
+    /// The face a saved reference names, or the family's preview face when the
+    /// stored style is gone. `nil` when the family itself is gone.
+    func face(for reference: FontFaceReference) -> FontFace? {
+        guard let family = familyByID[reference.familyID] else { return nil }
+        return family.faces.first { $0.postScriptName == reference.postScriptName } ?? family.previewFace
     }
 
     /// Returns the unfiltered family count represented by a sidebar destination.
@@ -335,6 +476,8 @@ final class FontCatalog: ObservableObject {
                 return systemFontCount
             case .local:
                 return families.lazy.filter { $0.source == .local }.count
+            case .mixed:
+                return mixedPairs.count
             default:
                 return families.count
             }

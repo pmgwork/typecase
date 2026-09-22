@@ -21,6 +21,14 @@ final class FontResolver {
         return available
     }
 
+    /// Whether a face can actually be drawn: installed in the process, or
+    /// readable from its font file.
+    func isResolvable(postScriptName: String, fileURL: URL?) -> Bool {
+        if isAvailable(postScriptName) { return true }
+        guard let fileURL else { return false }
+        return descriptor(postScriptName: postScriptName, fileURL: fileURL) != nil
+    }
+
     /// Resolves installed fonts by PostScript name and disabled local fonts
     /// directly from their files. Creating a CTFont from a file descriptor does
     /// not register or activate that font for the process. When `variations` is
@@ -47,6 +55,31 @@ final class FontResolver {
         }
         let font = CTFontCreateWithFontDescriptor(descriptor, size, nil)
         return Font(font)
+    }
+
+    /// The same resolution as `previewFont`, as an `NSFont` for AppKit text
+    /// views. Falls back to the system font while the face cannot be drawn.
+    func nsFont(
+        postScriptName: String?,
+        fileURL: URL?,
+        size: CGFloat,
+        variations: [UInt32: Double]? = nil
+    ) -> NSFont {
+        guard let postScriptName else { return NSFont.systemFont(ofSize: size) }
+        if let variations, !variations.isEmpty,
+           let base = baseDescriptor(postScriptName: postScriptName, fileURL: fileURL, size: size) {
+            let attributes = [kCTFontVariationAttribute: variationDictionary(variations)] as CFDictionary
+            let descriptor = CTFontDescriptorCreateCopyWithAttributes(base, attributes)
+            return CTFontCreateWithFontDescriptor(descriptor, size, nil) as NSFont
+        }
+        if let installed = NSFont(name: postScriptName, size: size) {
+            return installed
+        }
+        guard let fileURL,
+              let descriptor = descriptor(postScriptName: postScriptName, fileURL: fileURL) else {
+            return NSFont.systemFont(ofSize: size)
+        }
+        return CTFontCreateWithFontDescriptor(descriptor, size, nil) as NSFont
     }
 
     /// The axes of a variable font and the coordinates of the instance

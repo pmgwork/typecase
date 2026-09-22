@@ -51,8 +51,8 @@ struct ContentView: View {
             .sharedBackgroundVisibility(.hidden)
 
             // On macOS, confirmationAction is the trailing toolbar region;
-            // automatic and primaryAction items can remain on the leading side.
-            ToolbarItem(placement: .confirmationAction) {
+            // navigation items stay on the leading side.
+            ToolbarItem(placement: .navigation) {
                 Button {
                     playground.use(
                         viewState.selectedFamilies(catalog: catalog),
@@ -64,6 +64,10 @@ struct ContentView: View {
                     Label("PlayGround", systemImage: "text.word.spacing")
                 }
                 .help("Add the selected fonts to the PlayGround")
+            }
+
+            ToolbarItem(placement: .navigation) {
+                NewMixedPairButton(catalog: catalog)
             }
 
             ToolbarItem(placement: .confirmationAction) {
@@ -92,6 +96,8 @@ struct ContentView: View {
                 .help("Filter by category and status, and choose the list order")
             }
 
+            ToolbarSpacer(.fixed, placement: .confirmationAction)
+
             ToolbarItem(placement: .confirmationAction) {
                 Button {
                     inspectorVisible.toggle()
@@ -113,7 +119,10 @@ struct ContentView: View {
             .sharedBackgroundVisibility(.hidden)
         }
         .sheet(isPresented: $comparisonVisible) {
-            ComparisonView(viewState: viewState, families: viewState.selectedFamilies(catalog: catalog))
+            ComparisonView(
+                viewState: viewState,
+                families: viewState.selectedFamilies(catalog: catalog)
+            )
         }
         .onReceive(NotificationCenter.default.publisher(for: .addFontFolder)) { _ in
             // The File menu command is not tied to a window; only the key window navigates
@@ -343,6 +352,7 @@ private struct Sidebar: View {
             Section {
                 if settings.showAllSection { sectionRow(.all) }
                 if settings.showFavoritesSection { sectionRow(.favorites) }
+                if settings.showMixedSection { sectionRow(.mixed) }
                 if settings.showSystemSection { systemGroup }
                 if settings.showLocalSection { sectionRow(.local) }
             }
@@ -651,10 +661,12 @@ private struct FontLibraryView: View {
     var body: some View {
         VStack(spacing: 0) {
             let output = viewState.filter(catalog: catalog, favoritesFirst: settings.favoritesFirst)
-            if output.families.isEmpty {
+            if isMixedSection {
+                mixedPairsContent
+            } else if output.families.isEmpty {
                 emptyState(output: output)
             } else {
-                List(selection: $viewState.selection) {
+                List(selection: familySelection) {
                     ForEach(output.families) { family in
                         FontFamilyRow(
                             family: family,
@@ -747,6 +759,146 @@ private struct FontLibraryView: View {
             viewState.updateCoverage(catalog: catalog)
         }
         .navigationSplitViewColumnWidth(min: 320, ideal: 640)
+    }
+
+    /// The Mixed Fonts destination lists saved Japanese + Latin combinations
+    /// instead of the library's families.
+    private var isMixedSection: Bool {
+        viewState.librarySelection == .section(.mixed)
+    }
+
+    /// The font list's selection holds family ids only. A pair selected in the
+    /// Mixed Fonts section stays in the stored selection but is not offered to
+    /// this list, which cannot show it.
+    private var familySelection: Binding<Set<FontFamily.ID>> {
+        Binding(
+            get: { viewState.selection.filter { !FontPair.isSelectionID($0) } },
+            set: { viewState.selection = $0 }
+        )
+    }
+
+    /// The Mixed Fonts list's selection holds pair ids only.
+    private var mixedPairSelection: Binding<Set<FontFamily.ID>> {
+        Binding(
+            get: { viewState.selection.filter(FontPair.isSelectionID) },
+            set: { viewState.selection = $0 }
+        )
+    }
+
+    // MARK: - Mixed pairs
+
+    @ViewBuilder
+    private var mixedPairsContent: some View {
+        let pairs = filteredMixedPairs
+        if pairs.isEmpty {
+            mixedEmptyState
+        } else {
+            List(selection: mixedPairSelection) {
+                ForEach(pairs) { pair in
+                    mixedPairRow(pair)
+                        .equatable()
+                        .tag(pair.selectionID)
+                        .contextMenu {
+                            Button("Delete", role: .destructive) { deleteMixedPair(pair) }
+                        }
+                }
+            }
+            .scrollContentBackground(.hidden)
+            .listStyle(.inset)
+            .environment(\.controlActiveState, .key)
+        }
+    }
+
+    private func mixedPairRow(_ pair: FontPair) -> MixedPairRow {
+        var faces: [MixedScript: FontFace] = [:]
+        for entry in pair.references {
+            if let face = catalog.face(for: entry.reference) {
+                faces[entry.script] = face
+            }
+        }
+        return MixedPairRow(
+            pair: pair,
+            japaneseName: japaneseName(for: pair),
+            latinName: latinName(for: pair),
+            faces: faces,
+            variations: settings.variationValues(for: Array(faces.values)),
+            sourceLabel: sourceLabel(for: pair),
+            previewText: settings.effectiveMixedText(entered: viewState.previewText),
+            previewSize: settings.previewSize,
+            previewTextColor: settings.previewTextColor,
+            isSelected: viewState.selection.contains(pair.selectionID),
+            selectionTint: selectionTint,
+            isResolvable: faces.count == pair.references.count
+        )
+    }
+
+    /// The short source labels of a pair's fonts, without repeats. System fonts
+    /// carry no label, matching the font rows.
+    private func sourceLabel(for pair: FontPair) -> String {
+        var labels: [String] = []
+        for entry in pair.references {
+            guard let family = catalog.familyByID[entry.reference.familyID],
+                  family.source != .system else { continue }
+            let label = family.source.shortTitle
+            if !labels.contains(label) { labels.append(label) }
+        }
+        return labels.joined(separator: " / ")
+    }
+
+    /// The saved pairs, ordered by name and narrowed by the search text, which
+    /// also matches the two font names.
+    private var filteredMixedPairs: [FontPair] {
+        let query = viewState.searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        return catalog.mixedPairs
+            .filter { pair in
+                guard !query.isEmpty else { return true }
+                return name(for: pair).localizedCaseInsensitiveContains(query)
+                    || japaneseName(for: pair).localizedCaseInsensitiveContains(query)
+                    || latinName(for: pair).localizedCaseInsensitiveContains(query)
+            }
+            .sorted { name(for: $0).localizedStandardCompare(name(for: $1)) == .orderedAscending }
+    }
+
+    private func name(for pair: FontPair) -> String {
+        FontPair.defaultName(japanese: japaneseName(for: pair), latin: latinName(for: pair))
+    }
+
+    @ViewBuilder
+    private var mixedEmptyState: some View {
+        if catalog.mixedPairs.isEmpty {
+            ContentUnavailableView {
+                Label("No mixed pairs yet", systemImage: "rectangle.on.rectangle")
+            } description: {
+                Text("Use the toolbar’s Mixed Font button to pair a Japanese font with a Latin one.")
+            } actions: {
+                Button("Show All Fonts") { viewState.librarySelection = .section(.all) }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+            ContentUnavailableView {
+                Label("No pairs match", systemImage: "line.3.horizontal.decrease.circle")
+            } description: {
+                Text("Change the search text.")
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+
+    private func japaneseName(for pair: FontPair) -> String {
+        catalog.familyByID[pair.japanese.familyID]?.name ?? pair.japanese.postScriptName
+    }
+
+    private func latinName(for pair: FontPair) -> String {
+        catalog.familyByID[pair.latin.familyID]?.name ?? pair.latin.postScriptName
+    }
+
+    private func deleteMixedPair(_ pair: FontPair) {
+        let wasSelected = viewState.selection.contains(pair.selectionID)
+        catalog.removeMixedPair(pair)
+        if wasSelected {
+            viewState.selection = []
+            viewState.reconcile(with: catalog)
+        }
     }
 
     private var previewTextEditor: some View {
@@ -1215,7 +1367,9 @@ private struct FontInspector: View {
     }
 
     var body: some View {
-        if let family = catalog.family(for: viewState.selection) {
+        if let pair = catalog.mixedPair(for: viewState.selection) {
+            mixedPairInspector(pair)
+        } else if let family = catalog.family(for: viewState.selection) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
                     HStack(alignment: .top, spacing: 8) {
@@ -1323,11 +1477,80 @@ private struct FontInspector: View {
             } description: {
                 Text("Compare them side by side, or select a single font to edit its details.")
             } actions: {
+                if let sources = catalog.mixedPairSources(in: viewState.selectedFamilies(catalog: catalog)) {
+                    Button("Create Mixed Pair") {
+                        viewState.createMixedPair(sources.japanese, sources.latin, catalog: catalog)
+                    }
+                }
                 Button("Compare") { comparisonVisible = true }
             }
         } else {
             ContentUnavailableView("Select a font", systemImage: "textformat")
         }
+    }
+
+    // MARK: - Mixed pair
+
+    /// The inspector for a saved pair: its fonts and a specimen that draws each
+    /// part of the text with its own face.
+    private func mixedPairInspector(_ pair: FontPair) -> some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                Text(FontPair.defaultName(
+                    japanese: pairName(for: pair.japanese),
+                    latin: pairName(for: pair.latin)
+                ))
+                .font(.title3.weight(.semibold))
+                .textSelection(.enabled)
+
+                MixedFontPreview(
+                    text: settings.effectiveMixedText(entered: viewState.previewText),
+                    size: Self.previewSize,
+                    lines: 2,
+                    fonts: fonts(for: pair)
+                )
+
+                Group {
+                    ForEach(pair.references, id: \.script) { entry in
+                        inspectorDetail(entry.script.title, pairName(for: entry.reference))
+                    }
+                }
+
+                if pair.references.contains(where: { !catalog.canResolve($0.reference) }) {
+                    Label("One of the fonts is no longer in the library.", systemImage: "exclamationmark.triangle")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+
+                Divider()
+
+                Button("Delete Pair", role: .destructive) {
+                    catalog.removeMixedPair(pair)
+                    viewState.selection = []
+                    viewState.reconcile(with: catalog)
+                }
+            }
+            .padding(20)
+        }
+    }
+
+    /// The pair's faces as drawable specs, keyed by the part they draw.
+    private func fonts(for pair: FontPair) -> [MixedScript: PreviewFaceSpec] {
+        pair.references.reduce(into: [:]) { result, entry in
+            result[entry.script] = PreviewFaceSpec(
+                postScriptName: entry.reference.postScriptName,
+                fileURL: catalog.face(for: entry.reference)?.fileURL,
+                variations: settings.variationValues(for: entry.reference.postScriptName)
+            )
+        }
+    }
+
+    private func pairName(for reference: FontFaceReference) -> String {
+        guard let family = catalog.familyByID[reference.familyID] else { return reference.postScriptName }
+        guard let face = family.faces.first(where: { $0.postScriptName == reference.postScriptName }) else {
+            return family.name
+        }
+        return "\(family.name) \(face.styleName)"
     }
 
     private func classificationBinding(for family: FontFamily) -> Binding<FontCategory> {

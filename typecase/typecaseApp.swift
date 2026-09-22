@@ -12,6 +12,7 @@ struct typecaseApp: App {
     @StateObject private var catalog = FontCatalog()
     @StateObject private var settings = AppSettings()
     @StateObject private var playground = PlaygroundStore()
+    @StateObject private var mixedPairDraft = MixedPairDraft()
 
     var body: some Scene {
         WindowGroup {
@@ -19,6 +20,7 @@ struct typecaseApp: App {
                 .environmentObject(catalog)
                 .environmentObject(settings)
                 .environmentObject(playground)
+                .environmentObject(mixedPairDraft)
                 .task { catalog.start() }
         }
         .defaultSize(width: 1280, height: 760)
@@ -47,6 +49,15 @@ struct typecaseApp: App {
                 .environmentObject(playground)
         }
         .defaultSize(width: 1040, height: 720)
+        .defaultPosition(.center)
+        .windowResizability(.contentMinSize)
+
+        Window("New Mixed Pair", id: MixedPairWindow.id) {
+            MixedPairEditorView(catalog: catalog)
+                .environmentObject(settings)
+                .environmentObject(mixedPairDraft)
+        }
+        .defaultSize(width: 880, height: 480)
         .defaultPosition(.center)
         .windowResizability(.contentMinSize)
 

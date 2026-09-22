@@ -91,6 +91,11 @@ private struct SidebarSettingsView: View {
                     icon: LibrarySection.local.icon,
                     isOn: $settings.showLocalSection
                 )
+                SidebarItemToggle(
+                    title: LibrarySection.mixed.title,
+                    icon: LibrarySection.mixed.icon,
+                    isOn: $settings.showMixedSection
+                )
                 ForEach(FontProviderRegistry.all) { provider in
                     SidebarItemToggle(
                         title: provider.title,
@@ -196,7 +201,7 @@ private struct PreviewSettingsView: View {
             } header: {
                 Text("Sample Text")
             } footer: {
-                Text("Used in previews while the preview text field is empty.")
+                Text("Used in previews while the preview text field is empty; a mixed specimen uses its own Japanese, English, digits, and symbols sample.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
             }

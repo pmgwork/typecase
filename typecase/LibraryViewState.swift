@@ -219,7 +219,10 @@ final class LibraryViewState: ObservableObject {
         // a restored selection must survive until the families arrive.
         guard !catalog.familyIDs.isEmpty else { return }
         reconcileDestination(with: catalog)
-        selection.formIntersection(catalog.familyIDs)
+        // A saved pair is selected from its own section, so its id stays valid
+        // alongside the family ids.
+        let selectable = catalog.familyIDs.union(catalog.mixedPairs.map(\.selectionID))
+        selection.formIntersection(selectable)
         if selection.isEmpty, let first = catalog.families.first?.id {
             selection = [first]
         }
@@ -251,6 +254,16 @@ final class LibraryViewState: ObservableObject {
 
     func selectedFamilies(catalog: FontCatalog) -> [FontFamily] {
         catalog.families.filter { selection.contains($0.id) }
+    }
+
+    /// Saves a pair from two families — one Japanese and one Latin — and moves
+    /// the window to it so a new pair is immediately visible in the Mixed
+    /// Fonts section.
+    func createMixedPair(_ first: FontFamily, _ second: FontFamily, catalog: FontCatalog) {
+        guard let sources = catalog.mixedPairSources(in: [first, second]),
+              let pair = catalog.addMixedPair([.japanese: sources.japanese, .latin: sources.latin]) else { return }
+        librarySelection = .section(.mixed)
+        selection = [pair.selectionID]
     }
 
     private func matchesSection(_ family: FontFamily, catalog: FontCatalog) -> Bool {
