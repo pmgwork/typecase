@@ -82,11 +82,25 @@ final class FontResolver {
         return CTFontCreateWithFontDescriptor(descriptor, size, nil) as NSFont
     }
 
-    /// The axes of a variable font and the coordinates of the instance
-    /// `postScriptName` resolves to at `size`. Returns nil for static fonts.
-    func variableInfo(postScriptName: String, fileURL: URL?, size: CGFloat) -> VariableFontInfo? {
-        guard let font = resolvedFont(postScriptName: postScriptName, fileURL: fileURL, size: size),
-              let rawAxes = CTFontCopyVariationAxes(font) as? [[CFString: Any]] else { return nil }
+    /// Inspector lookups can read a large font file. Resolve it away from the
+    /// main actor so changing selection never blocks the list's click handling.
+    nonisolated static func backgroundVariableInfo(
+        postScriptName: String, fileURL: URL?, size: CGFloat
+    ) -> VariableFontInfo? {
+        let registered = CTFontCreateWithName(postScriptName as CFString, size, nil)
+        if (CTFontCopyPostScriptName(registered) as String) == postScriptName {
+            return variationInfo(for: registered)
+        }
+        guard let fileURL,
+              let descriptors = CTFontManagerCreateFontDescriptorsFromURL(fileURL as CFURL) as? [CTFontDescriptor],
+              let descriptor = descriptors.first(where: {
+                  (CTFontDescriptorCopyAttribute($0, kCTFontNameAttribute) as? String) == postScriptName
+              }) else { return nil }
+        return variationInfo(for: CTFontCreateWithFontDescriptor(descriptor, size, nil))
+    }
+
+    nonisolated private static func variationInfo(for font: CTFont) -> VariableFontInfo? {
+        guard let rawAxes = CTFontCopyVariationAxes(font) as? [[CFString: Any]] else { return nil }
         let axes = rawAxes.compactMap { axis -> VariableFontAxis? in
             guard let tag = (axis[kCTFontVariationAxisIdentifierKey] as? NSNumber)?.uint32Value,
                   let name = axis[kCTFontVariationAxisNameKey] as? String else { return nil }
@@ -111,14 +125,6 @@ final class FontResolver {
     }
 
     // MARK: - Resolution
-
-    private func resolvedFont(postScriptName: String, fileURL: URL?, size: CGFloat) -> CTFont? {
-        let registered = CTFontCreateWithName(postScriptName as CFString, size, nil)
-        if (CTFontCopyPostScriptName(registered) as String) == postScriptName { return registered }
-        guard let fileURL,
-              let descriptor = descriptor(postScriptName: postScriptName, fileURL: fileURL) else { return nil }
-        return CTFontCreateWithFontDescriptor(descriptor, size, nil)
-    }
 
     /// The descriptor of the requested instance before any axis overrides.
     private func baseDescriptor(postScriptName: String, fileURL: URL?, size: CGFloat) -> CTFontDescriptor? {
@@ -164,5 +170,14 @@ final class FontResolver {
         availability.removeAll(keepingCapacity: true)
         descriptorsByURL.removeAll(keepingCapacity: true)
         unreadableURLs.removeAll(keepingCapacity: true)
+    }
+
+    func invalidate(names: Set<String>, urls: Set<URL>) {
+        for name in names { availability.removeValue(forKey: name) }
+        for url in urls {
+            let normalized = url.standardizedFileURL
+            descriptorsByURL.removeValue(forKey: normalized)
+            unreadableURLs.remove(normalized)
+        }
     }
 }

@@ -58,8 +58,10 @@ final class AppSettings: ObservableObject {
 
     /// The last non-folder sidebar destination, and the last selection. Kept
     /// here so the startup restore can read them before a window opens.
-    @Published private(set) var lastSelection: [String]
-    @Published private(set) var lastLocation: String
+    // Persistence-only state: publishing it invalidates every font preview on
+    // each row click, even though no view displays these stored values.
+    private(set) var lastSelection: [String]
+    private(set) var lastLocation: String
 
     private let defaults = UserDefaults.standard
 
@@ -355,4 +357,3 @@ private extension Color {
         )
     }
 }
-

@@ -66,6 +66,7 @@ final class LibraryViewState: ObservableObject {
 
     struct FilterOutput {
         let families: [FontFamily]
+        let ids: [FontFamily.ID]
         let sectionIsEmpty: Bool
     }
 
@@ -95,10 +96,21 @@ final class LibraryViewState: ObservableObject {
             return applied.matches
         }()
 
+        let selectedFolder: URL? = {
+            if case .folder(let folder) = librarySelection { return folder.standardizedFileURL }
+            return nil
+        }()
+        let selectedTagIDs: Set<FontFamily.ID>? = {
+            if case .tag(let tag) = librarySelection {
+                return catalog.taggedFamilyIDs[tag.lowercased()] ?? []
+            }
+            return nil
+        }()
+
         var matches: [FontFamily] = []
         var sectionMatches = 0
         for family in catalog.families {
-            guard matchesSection(family, catalog: catalog) else { continue }
+            guard matchesSection(family, catalog: catalog, folder: selectedFolder, tagIDs: selectedTagIDs) else { continue }
             sectionMatches += 1
             if let coverageFilter, !coverageFilter.contains(family.id) { continue }
             if !query.isEmpty {
@@ -123,29 +135,43 @@ final class LibraryViewState: ObservableObject {
 
         // The catalog order is by name; every order keeps a name tiebreaker so
         // equal entries stay predictable. Favorites-first is layered on top.
-        matches.sort { lhs, rhs in
+        if sortOrder == .name {
+            // The catalog is already sorted by display name. Filtering preserves
+            // that order; stable partitioning also keeps it within each group.
             if favoritesFirst {
-                let lhsFavorite = catalog.favorites.contains(lhs.id)
-                let rhsFavorite = catalog.favorites.contains(rhs.id)
-                if lhsFavorite != rhsFavorite { return lhsFavorite }
+                let favorites = matches.filter { catalog.favorites.contains($0.id) }
+                let others = matches.filter { !catalog.favorites.contains($0.id) }
+                matches = favorites + others
             }
-            switch sortOrder {
-            case .name:
-                break
-            case .manufacturer:
-                let comparison = lhs.manufacturer.localizedStandardCompare(rhs.manufacturer)
-                if comparison != .orderedSame { return comparison == .orderedAscending }
-            case .dateAdded:
-                let lhsTime = catalog.addedTime(for: lhs)
-                let rhsTime = catalog.addedTime(for: rhs)
-                if lhsTime != rhsTime { return lhsTime > rhsTime }
-            case .activation:
-                if lhs.isEnabled != rhs.isEnabled { return lhs.isEnabled }
+        } else {
+            matches.sort { lhs, rhs in
+                if favoritesFirst {
+                    let lhsFavorite = catalog.favorites.contains(lhs.id)
+                    let rhsFavorite = catalog.favorites.contains(rhs.id)
+                    if lhsFavorite != rhsFavorite { return lhsFavorite }
+                }
+                switch sortOrder {
+                case .name:
+                    break
+                case .manufacturer:
+                    let comparison = lhs.manufacturer.localizedStandardCompare(rhs.manufacturer)
+                    if comparison != .orderedSame { return comparison == .orderedAscending }
+                case .dateAdded:
+                    let lhsTime = catalog.addedTime(for: lhs)
+                    let rhsTime = catalog.addedTime(for: rhs)
+                    if lhsTime != rhsTime { return lhsTime > rhsTime }
+                case .activation:
+                    if lhs.isEnabled != rhs.isEnabled { return lhs.isEnabled }
+                }
+                return lhs.name.localizedStandardCompare(rhs.name) == .orderedAscending
             }
-            return lhs.name.localizedStandardCompare(rhs.name) == .orderedAscending
         }
 
-        let output = FilterOutput(families: matches, sectionIsEmpty: sectionMatches == 0)
+        let output = FilterOutput(
+            families: matches,
+            ids: matches.map(\.id),
+            sectionIsEmpty: sectionMatches == 0
+        )
         cachedOutput = (key, output)
         return output
     }
@@ -276,7 +302,10 @@ final class LibraryViewState: ObservableObject {
         selection = [pair.selectionID]
     }
 
-    private func matchesSection(_ family: FontFamily, catalog: FontCatalog) -> Bool {
+    private func matchesSection(
+        _ family: FontFamily, catalog: FontCatalog,
+        folder: URL?, tagIDs: Set<FontFamily.ID>?
+    ) -> Bool {
         switch librarySelection {
         case .section(let section):
             if let provider = section.provider { return family.source == .provider(provider) }
@@ -289,10 +318,11 @@ final class LibraryViewState: ObservableObject {
             }
         case .systemScope(let scope):
             return catalog.familySystemScopes[family.id]?.contains(scope) ?? false
-        case .folder(let folder):
-            return catalog.familyFolderAncestors[family.id]?.contains(folder.standardizedFileURL) ?? false
-        case .tag(let tag):
-            return catalog.hasTag(tag, in: family)
+        case .folder:
+            guard let folder else { return false }
+            return catalog.familyFolderAncestors[family.id]?.contains(folder) ?? false
+        case .tag:
+            return tagIDs?.contains(family.id) ?? false
         }
     }
 }

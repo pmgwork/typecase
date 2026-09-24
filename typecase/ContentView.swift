@@ -667,7 +667,7 @@ private struct FontLibraryView: View {
     private var visibleIDs: [FontFamily.ID] {
         if isMixedSection { return filteredMixedPairs.map(\.selectionID) }
         return viewState.filter(catalog: catalog, favoritesFirst: settings.favoritesFirst)
-            .families.map(\.id)
+            .ids
     }
 
     var body: some View {
@@ -1486,12 +1486,15 @@ private struct FontInspector: View {
             }
             .task(id: family.id) {
                 let face = family.previewFace
-                let info = catalog.variableInfo(for: family, size: Self.previewSize)
+                variableAxes = nil
+                let info = await catalog.variableInfo(for: family, size: Self.previewSize)
+                guard !Task.isCancelled else { return }
                 variableAxes = face.flatMap { face in
                     info.map { VariableAxesState(faceID: face.id, info: $0) }
                 }
-                // Clear while reading so the metadata never describes the
-                // previously selected font.
+            }
+            .task(id: family.id) {
+                let face = family.previewFace
                 metadata = nil
                 let loaded = await catalog.fontMetadata(
                     forPostScriptName: face?.postScriptName,

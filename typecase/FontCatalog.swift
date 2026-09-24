@@ -32,6 +32,12 @@ final class FontCatalog: ObservableObject {
     private(set) var familyFolderAncestors: [FontFamily.ID: Set<URL>] = [:]
     private(set) var allTags: [String] = []
     private(set) var systemFontCount = 0
+    private var favoriteCount = 0
+    private var sourceCounts: [FontSource: Int] = [:]
+    private var scopeCounts: [SystemFontScope: Int] = [:]
+    private var folderCounts: [URL: Int] = [:]
+    private var tagCounts: [String: Int] = [:]
+    private(set) var taggedFamilyIDs: [String: Set<FontFamily.ID>] = [:]
 
     private let defaults = UserDefaults.standard
     private let engine = FontScanEngine()
@@ -92,8 +98,10 @@ final class FontCatalog: ObservableObject {
     func toggleFavorite(_ family: FontFamily) {
         if favorites.contains(family.id) {
             favorites.remove(family.id)
+            if familyIDs.contains(family.id) { favoriteCount -= 1 }
         } else {
             favorites.insert(family.id)
+            if familyIDs.contains(family.id) { favoriteCount += 1 }
         }
         defaults.set(Array(favorites), forKey: "favoriteFamilies")
         dataRevision += 1
@@ -292,6 +300,7 @@ final class FontCatalog: ObservableObject {
         defaults.set(userTags.mapValues(Array.init), forKey: "familyTags")
         defaults.set(Array(knownTags), forKey: "tagNames")
         rebuildAllTags()
+        rebuildTagCounts()
         dataRevision += 1
     }
 
@@ -303,6 +312,15 @@ final class FontCatalog: ObservableObject {
         }
     }
 
+    private func rebuildTagCounts() {
+        var ids: [String: Set<FontFamily.ID>] = [:]
+        for (familyID, tags) in userTags where familyIDs.contains(familyID) {
+            for tag in tags { ids[Self.tagKey(tag), default: []].insert(familyID) }
+        }
+        taggedFamilyIDs = ids
+        tagCounts = ids.mapValues(\.count)
+    }
+
     /// Stores the user's classification, or clears the override when the chosen
     /// value is the one the font file already implies.
     func setCategory(_ category: FontCategory, for family: FontFamily) {
@@ -312,7 +330,18 @@ final class FontCatalog: ObservableObject {
             categoryOverrides[family.id] = category
         }
         defaults.set(categoryOverrides.mapValues(\.rawValue), forKey: "categoryOverrides")
-        regroup()
+        if let index = families.firstIndex(where: { $0.id == family.id }) {
+            let old = families[index]
+            let updated = FontFamily(
+                id: old.id, localizedName: old.localizedName,
+                languages: old.languages, localizedNames: old.localizedNames,
+                manufacturer: old.manufacturer, source: old.source,
+                category: category, detectedCategory: old.detectedCategory,
+                faces: old.faces
+            )
+            families[index] = updated
+            familyByID[old.id] = updated
+        }
         dataRevision += 1
     }
 
@@ -477,29 +506,26 @@ final class FontCatalog: ObservableObject {
         switch selection {
         case .section(let section):
             if let provider = section.provider {
-                return families.lazy.filter { $0.source == .provider(provider) }.count
+                return sourceCounts[.provider(provider), default: 0]
             }
             switch section {
             case .favorites:
-                return favorites.intersection(familyIDs).count
+                return favoriteCount
             case .system:
                 return systemFontCount
             case .local:
-                return families.lazy.filter { $0.source == .local }.count
+                return sourceCounts[.local, default: 0]
             case .mixed:
                 return mixedPairs.count
             default:
                 return families.count
             }
         case .systemScope(let scope):
-            return familySystemScopes.values.lazy.filter { $0.contains(scope) }.count
+            return scopeCounts[scope, default: 0]
         case .folder(let folder):
-            let standardizedFolder = folder.standardizedFileURL
-            return familyFolderAncestors.values.lazy
-                .filter { $0.contains(standardizedFolder) }
-                .count
+            return folderCounts[folder.standardizedFileURL, default: 0]
         case .tag(let tag):
-            return families.lazy.filter { self.hasTag(tag, in: $0) }.count
+            return tagCounts[Self.tagKey(tag), default: 0]
         }
     }
 
@@ -661,6 +687,25 @@ final class FontCatalog: ObservableObject {
             localizedNameCache: localizedNameCache
         ))
 
+        // Grouping and localized name sorting can be expensive for large font
+        // libraries. Only apply the snapshot if activation/preferences have not
+        // changed while the background work was running.
+        let registrationRevision = userRegistrationRevision
+        let activeNames = activeManagedNames
+        let deactivatedNames = deactivatedManagedNames
+        let overrides = categoryOverrides
+        let grouped: [FontFamily]? = output.hasChanges || !hasLoadedOnce
+            ? await Task.detached(priority: .userInitiated) {
+                Self.group(
+                    installedRecords: output.installedRecords,
+                    folderRecords: output.folderRecords,
+                    activeNames: activeNames,
+                    deactivatedNames: deactivatedNames,
+                    categoryOverrides: overrides
+                )
+            }.value
+            : nil
+
         localizedNameCache = output.localizedNameCache
         fileCache = output.files
         folderRecords = output.folderRecords
@@ -680,7 +725,14 @@ final class FontCatalog: ObservableObject {
 
         if output.hasChanges || !hasLoadedOnce {
             installedRecords = output.installedRecords
-            regroup()
+            if registrationRevision == userRegistrationRevision, overrides == categoryOverrides,
+               let grouped {
+                families = grouped
+                rebuildIndexes()
+                FontResolver.shared.invalidate()
+            } else {
+                regroup()
+            }
             folderTrees = output.folderTrees
             hasLoadedOnce = true
             dataRevision += 1
@@ -864,7 +916,11 @@ final class FontCatalog: ObservableObject {
                 // Activation switches a face between the registered font and
                 // its file, which can resolve to different coverage data.
                 await self.coverage.invalidate(urls: urls)
-                self.regroup()
+                let changedNames = Set(outcomes.filter(\.succeeded).flatMap(\.names))
+                if !changedNames.isEmpty {
+                    self.regroup(affectedBy: changedNames)
+                    FontResolver.shared.invalidate(names: changedNames, urls: urls)
+                }
                 self.dataRevision += 1
             }
         }
@@ -926,13 +982,13 @@ final class FontCatalog: ObservableObject {
     }
 
     /// The preview face's variable axes, or nil for a static font.
-    func variableInfo(for family: FontFamily, size: CGFloat) -> VariableFontInfo? {
+    func variableInfo(for family: FontFamily, size: CGFloat) async -> VariableFontInfo? {
         guard let face = family.previewFace else { return nil }
-        return FontResolver.shared.variableInfo(
-            postScriptName: face.postScriptName,
-            fileURL: face.fileURL,
-            size: size
-        )
+        return await Task.detached(priority: .userInitiated) {
+            FontResolver.backgroundVariableInfo(
+                postScriptName: face.postScriptName, fileURL: face.fileURL, size: size
+            )
+        }.value
     }
 
     /// A face's descriptive metadata, read from its font file off the main
@@ -951,9 +1007,27 @@ final class FontCatalog: ObservableObject {
 
     // MARK: - Indexes
 
-    /// Rebuilds the family list from the cached records using the current
-    /// activation state. Cheap enough to run after a toggle or a category change.
+    /// Rebuilds the full family list from cached records after a scan when the
+    /// activation state changed during background grouping.
     private func regroup() {
+        families = Self.group(
+            installedRecords: installedRecords,
+            folderRecords: folderRecords,
+            activeNames: activeManagedNames,
+            deactivatedNames: deactivatedManagedNames,
+            categoryOverrides: categoryOverrides
+        )
+        rebuildIndexes()
+        FontResolver.shared.invalidate()
+    }
+
+    nonisolated private static func group(
+        installedRecords: [FaceRecord],
+        folderRecords: [FaceRecord],
+        activeNames: Set<String>,
+        deactivatedNames: Set<String>,
+        categoryOverrides: [String: FontCategory]
+    ) -> [FontFamily] {
         var installedNames: Set<String> = []
         var records: [FaceRecord] = []
         records.reserveCapacity(installedRecords.count + folderRecords.count)
@@ -966,14 +1040,47 @@ final class FontCatalog: ObservableObject {
             let name = record.face.postScriptName
             // The installed records may still list a font the user deactivated since
             // the last scan, so recently deactivated names are masked until then.
-            let isInstalled = activeManagedNames.contains(name)
-                || (installedNames.contains(name) && !deactivatedManagedNames.contains(name))
+            let isInstalled = activeNames.contains(name)
+                || (installedNames.contains(name) && !deactivatedNames.contains(name))
             records.append(record.withInstalled(isInstalled))
         }
+        return group(records, categoryOverrides: categoryOverrides)
+    }
 
-        families = Self.group(records, categoryOverrides: categoryOverrides)
-        rebuildIndexes()
-        FontResolver.shared.invalidate()
+    /// Registration changes only the installed flag of faces in the affected
+    /// families. Keep every other row (and its indexes) intact on a click.
+    private func regroup(affectedBy names: Set<String>) {
+        let affectedIDs = Set(families.lazy.filter { family in
+            family.faces.contains { names.contains($0.postScriptName) }
+        }.map(\.id))
+        guard !affectedIDs.isEmpty else { return }
+
+        let installedNames = Set(installedRecords.map { $0.face.postScriptName })
+        var records: [FaceRecord] = []
+        for record in installedRecords {
+            if affectedIDs.contains(Self.familyID(for: record.family)) {
+                records.append(record.withInstalled(true))
+            }
+        }
+        for record in folderRecords {
+            guard affectedIDs.contains(Self.familyID(for: record.family)) else { continue }
+            let name = record.face.postScriptName
+            let installed = activeManagedNames.contains(name)
+                || (installedNames.contains(name) && !deactivatedManagedNames.contains(name))
+            records.append(record.withInstalled(installed))
+        }
+        let updated = Dictionary(uniqueKeysWithValues: Self.group(records, categoryOverrides: categoryOverrides)
+            .map { ($0.id, $0) })
+        for index in families.indices {
+            if let family = updated[families[index].id] {
+                families[index] = family
+                familyByID[family.id] = family
+            }
+        }
+    }
+
+    nonisolated private static func familyID(for name: String) -> String {
+        name.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
     }
 
     private func rebuildIndexes() {
@@ -986,9 +1093,13 @@ final class FontCatalog: ObservableObject {
         var scopes: [FontFamily.ID: Set<SystemFontScope>] = [:]
         var ancestors: [FontFamily.ID: Set<URL>] = [:]
         var systemCount = 0
+        var sources: [FontSource: Int] = [:]
+        var scopeTotals: [SystemFontScope: Int] = [:]
+        var folderTotals: [URL: Int] = [:]
 
         for family in families {
             byID[family.id] = family
+            sources[family.source, default: 0] += 1
             if family.source == .system {
                 systemCount += 1
                 var familyScopes: Set<SystemFontScope> = []
@@ -996,6 +1107,7 @@ final class FontCatalog: ObservableObject {
                     familyScopes.formUnion(Self.systemScopes(for: face, home: home, allUsers: allUsers))
                 }
                 scopes[family.id] = familyScopes
+                for scope in familyScopes { scopeTotals[scope, default: 0] += 1 }
             }
             var familyAncestors: Set<URL> = []
             for face in family.faces where face.isManaged {
@@ -1004,14 +1116,20 @@ final class FontCatalog: ObservableObject {
             }
             if !familyAncestors.isEmpty {
                 ancestors[family.id] = familyAncestors
+                for folder in familyAncestors { folderTotals[folder, default: 0] += 1 }
             }
         }
 
         familyByID = byID
         familyIDs = Set(byID.keys)
+        favoriteCount = favorites.intersection(familyIDs).count
         familySystemScopes = scopes
         familyFolderAncestors = ancestors
         systemFontCount = systemCount
+        sourceCounts = sources
+        scopeCounts = scopeTotals
+        folderCounts = folderTotals
+        rebuildTagCounts()
     }
 
     private static func systemScopes(for face: FontFace, home: URL, allUsers: URL) -> Set<SystemFontScope> {
@@ -1082,9 +1200,9 @@ final class FontCatalog: ObservableObject {
         return seeds
     }
 
-    private static func group(_ records: [FaceRecord], categoryOverrides: [String: FontCategory]) -> [FontFamily] {
+    nonisolated private static func group(_ records: [FaceRecord], categoryOverrides: [String: FontCategory]) -> [FontFamily] {
         Dictionary(grouping: records, by: {
-            $0.family.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+            familyID(for: $0.family)
         })
         .compactMap { id, records -> FontFamily? in
             guard let first = records.first else { return nil }
