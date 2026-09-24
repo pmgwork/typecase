@@ -5,6 +5,7 @@ struct ContentView: View {
     @EnvironmentObject private var catalog: FontCatalog
     @EnvironmentObject private var settings: AppSettings
     @EnvironmentObject private var playground: PlaygroundStore
+    @EnvironmentObject private var mixedPairDraft: MixedPairDraft
     @Environment(\.openWindow) private var openWindow
     @StateObject private var viewState = LibraryViewState()
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
@@ -149,6 +150,13 @@ struct ContentView: View {
         }
         .onChange(of: viewState.selection) { _, selection in
             settings.remember(selection: selection)
+        }
+        .onChange(of: mixedPairDraft.savedPairSelectionID) { _, id in
+            guard let id, window === mixedPairDraft.originatingWindow else { return }
+            if !settings.showMixedSection { settings.showMixedSection = true }
+            viewState.searchText = ""
+            viewState.librarySelection = .section(.mixed)
+            viewState.selection = [id]
         }
         .alert("TypeCase", isPresented: Binding(
             get: { catalog.errorMessage != nil },
@@ -332,8 +340,6 @@ private struct Sidebar: View {
     @AppStorage("foldersExpanded") private var foldersExpanded = true
     @AppStorage("tagsExpanded") private var tagsExpanded = true
     @State private var isDropTargeted = false
-    @State private var foldersHeaderHovered = false
-    @State private var tagsHeaderHovered = false
     @State private var isAddingTag = false
     @State private var newTagName = ""
     @FocusState private var newTagNameFocused: Bool
@@ -403,12 +409,13 @@ private struct Sidebar: View {
                     Text("Folders")
                         .foregroundStyle(Color(nsColor: .secondaryLabelColor))
                     Spacer(minLength: 0)
-                    headerControls(isHovered: foldersHeaderHovered) {
+                    headerControls {
                         Button {
                             catalog.addFolder { url in viewState.librarySelection = .folder(url) }
                         } label: {
                             Image(systemName: "folder.badge.plus")
                         }
+                        .frame(width: 24, height: 24)
                         .help("Add a font folder")
                         .accessibilityLabel("Add a font folder")
 
@@ -417,7 +424,6 @@ private struct Sidebar: View {
                 }
                 .padding(.trailing, 12)
                 .contentShape(Rectangle())
-                .onHover { foldersHeaderHovered = $0 }
             }
 
             if settings.showTagsSection {
@@ -440,12 +446,13 @@ private struct Sidebar: View {
                         Text("Tags")
                             .foregroundStyle(Color(nsColor: .secondaryLabelColor))
                         Spacer(minLength: 0)
-                        headerControls(isHovered: tagsHeaderHovered) {
+                        headerControls {
                             Button {
                                 beginCreatingTag()
                             } label: {
                                 Image(systemName: "plus")
                             }
+                            .frame(width: 24, height: 24)
                             .help("Add a tag")
                             .accessibilityLabel("Add a tag")
                             .popover(isPresented: $isAddingTag, arrowEdge: .top) {
@@ -457,7 +464,6 @@ private struct Sidebar: View {
                     }
                     .padding(.trailing, 12)
                     .contentShape(Rectangle())
-                    .onHover { tagsHeaderHovered = $0 }
                 }
             }
         }
@@ -554,7 +560,6 @@ private struct Sidebar: View {
     }
 
     private func headerControls<Content: View>(
-        isHovered: Bool,
         @ViewBuilder content: () -> Content
     ) -> some View {
         HStack(spacing: 8) {
@@ -562,8 +567,6 @@ private struct Sidebar: View {
         }
         .buttonStyle(.borderless)
         .controlSize(.small)
-        .opacity(isHovered ? 1 : 0)
-        .allowsHitTesting(isHovered)
     }
 
     private func disclosureButton(
@@ -576,7 +579,9 @@ private struct Sidebar: View {
             }
         } label: {
             Image(systemName: isExpanded.wrappedValue ? "chevron.down" : "chevron.right")
+                .frame(width: 24, height: 24)
         }
+        .frame(width: 24, height: 24)
         .help(isExpanded.wrappedValue ? "Collapse \(title)" : "Expand \(title)")
         .accessibilityLabel(isExpanded.wrappedValue ? "Collapse \(title)" : "Expand \(title)")
     }
@@ -654,9 +659,16 @@ private struct FontLibraryView: View {
     @ObservedObject var catalog: FontCatalog
     @ObservedObject var viewState: LibraryViewState
     @EnvironmentObject private var settings: AppSettings
+    @Environment(\.colorScheme) private var colorScheme
     @Environment(\.undoManager) private var environmentUndoManager
     @FocusState private var listFocused: Bool
     @State private var expandedFamilyID: FontFamily.ID?
+
+    private var visibleIDs: [FontFamily.ID] {
+        if isMixedSection { return filteredMixedPairs.map(\.selectionID) }
+        return viewState.filter(catalog: catalog, favoritesFirst: settings.favoritesFirst)
+            .families.map(\.id)
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -689,48 +701,10 @@ private struct FontLibraryView: View {
                         )
                             .equatable()
                             .tag(family.id)
-                            .contextMenu {
-                                let targets = activationTargets(for: family)
-                                Button(activationTitle("Activate", count: targets.count)) {
-                                    setEnabled(true, families: targets)
-                                }
-                                .disabled(!targets.contains(where: \.canActivate))
-
-                                Button(activationTitle("Deactivate", count: targets.count)) {
-                                    setEnabled(false, families: targets)
-                                }
-                                .disabled(!targets.contains(where: \.canDeactivate))
-
-                                Divider()
-
-                                Menu("Tags") {
-                                    if catalog.allTags.isEmpty {
-                                        Text("No Tags")
-                                    }
-                                    ForEach(catalog.allTags, id: \.self) { tag in
-                                        Toggle(tag, isOn: tagBinding(tag, families: targets))
-                                    }
-                                }
-
-                                Divider()
-
-                                Button("Show in Finder") {
-                                    catalog.revealFiles(family.fileURLs)
-                                }
-                                .disabled(family.fileURLs.isEmpty)
-
-                                Button("Copy Path") {
-                                    catalog.copyPaths(family.fileURLs)
-                                }
-                                .disabled(family.fileURLs.isEmpty)
-
-                                Divider()
-
-                                Menu("Copy Name") {
-                                    FontNameCopyItems(family: family)
-                                }
-                            }
                     }
+                }
+                .contextMenu(forSelectionType: FontFamily.ID.self) { ids in
+                    fontContextMenu(for: ids, among: output.families)
                 }
                 .scrollContentBackground(.hidden)
                 .listStyle(.inset)
@@ -758,6 +732,16 @@ private struct FontLibraryView: View {
         .task(id: viewState.coverageRequest(catalog: catalog)) {
             viewState.updateCoverage(catalog: catalog)
         }
+        .onAppear { reconcileSelection() }
+        .onChange(of: visibleIDs) { _, ids in
+            reconcileSelection(with: ids)
+        }
+        .onChange(of: viewState.selection) { _, _ in
+            reconcileSelection()
+        }
+        .onChange(of: catalog.isLoading) { _, _ in
+            reconcileSelection()
+        }
         .navigationSplitViewColumnWidth(min: 320, ideal: 640)
     }
 
@@ -765,6 +749,11 @@ private struct FontLibraryView: View {
     /// instead of the library's families.
     private var isMixedSection: Bool {
         viewState.librarySelection == .section(.mixed)
+    }
+
+    private func reconcileSelection(with ids: [FontFamily.ID]? = nil) {
+        guard !catalog.isLoading || !catalog.families.isEmpty else { return }
+        viewState.reconcileVisibleSelection(with: ids ?? visibleIDs)
     }
 
     /// The font list's selection holds family ids only. A pair selected in the
@@ -775,6 +764,55 @@ private struct FontLibraryView: View {
             get: { viewState.selection.filter { !FontPair.isSelectionID($0) } },
             set: { viewState.selection = $0 }
         )
+    }
+
+    /// A selection-based menu belongs to the List rather than a row's SwiftUI
+    /// view. This avoids the extra outlined row preview on secondary-click.
+    @ViewBuilder
+    private func fontContextMenu(for ids: Set<FontFamily.ID>, among families: [FontFamily]) -> some View {
+        let targets = families.filter { ids.contains($0.id) }
+        let fileURLs = Array(Set(targets.flatMap(\.fileURLs))).sorted { $0.path < $1.path }
+        if let family = targets.first {
+            Button(activationTitle("Activate", count: targets.count)) {
+                setEnabled(true, families: targets)
+            }
+            .disabled(!targets.contains(where: \.canActivate))
+
+            Button(activationTitle("Deactivate", count: targets.count)) {
+                setEnabled(false, families: targets)
+            }
+            .disabled(!targets.contains(where: \.canDeactivate))
+
+            Divider()
+
+            Menu("Tags") {
+                if catalog.allTags.isEmpty {
+                    Text("No Tags")
+                }
+                ForEach(catalog.allTags, id: \.self) { tag in
+                    Toggle(tag, isOn: tagBinding(tag, families: targets))
+                }
+            }
+
+            Divider()
+
+            Button("Show in Finder") {
+                catalog.revealFiles(fileURLs)
+            }
+            .disabled(fileURLs.isEmpty)
+
+            Button("Copy Path") {
+                catalog.copyPaths(fileURLs)
+            }
+            .disabled(fileURLs.isEmpty)
+
+            Divider()
+
+            Menu("Copy Name") {
+                FontNameCopyItems(family: family)
+            }
+            .disabled(targets.count != 1)
+        }
     }
 
     /// The Mixed Fonts list's selection holds pair ids only.
@@ -915,12 +953,11 @@ private struct FontLibraryView: View {
         settings.previewBackgroundColor ?? Color(nsColor: .windowBackgroundColor)
     }
 
-    /// The veil drawn over a selected row while the canvas has a custom color.
-    /// It takes the specimen text color so the selection stays readable and
-    /// belongs to the chosen palette; `nil` keeps the system accent selection.
+    /// Use the same selection region with the system and custom palettes.
+    /// The default dark appearance gets a pure white veil; light appearance
+    /// uses black so the selection remains visible on a white canvas.
     private var selectionTint: Color? {
-        guard settings.previewBackgroundColor != nil else { return nil }
-        return settings.previewTextColor ?? Color(nsColor: .labelColor)
+        settings.previewTextColor ?? (colorScheme == .dark ? .white : .black)
     }
 
 
@@ -1051,13 +1088,6 @@ private struct FontLibraryView: View {
         catalog.setEnabled(enabled, faces: faces, in: family, undoManager: activeUndoManager)
     }
 
-    /// Activation acts on the whole multi-selection when the clicked row is part
-    /// of it, and on the clicked family otherwise.
-    private func activationTargets(for family: FontFamily) -> [FontFamily] {
-        guard viewState.selection.contains(family.id), viewState.selection.count > 1 else { return [family] }
-        return viewState.selectedFamilies(catalog: catalog)
-    }
-
     private func activationTitle(_ action: String, count: Int) -> String {
         count > 1 ? "\(action) \(count) Fonts" : action
     }
@@ -1096,8 +1126,7 @@ private struct FontFamilyRow: View, Equatable {
     let previewSize: Double
     let previewTextColor: Color?
     let isSelected: Bool
-    /// The selection veil while a custom canvas color paints the list; `nil`
-    /// keeps the system accent selection.
+    /// The selected row's veil, shared by default and custom canvas colors.
     let selectionTint: Color?
     let isFavorite: Bool
     let variations: [FontFace.ID: [UInt32: Double]]
@@ -1125,7 +1154,7 @@ private struct FontFamilyRow: View, Equatable {
                 Text(family.name)
                     .font(.body.weight(.medium))
                     .lineLimit(1)
-                Text("\(family.faces.count) styles")
+                Text("\(family.faces.count) \(family.faces.count == 1 ? "style" : "styles")")
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
@@ -1189,6 +1218,7 @@ private struct FontFamilyRow: View, Equatable {
                 )
             }
         }
+        .padding(.horizontal, 12)
         .padding(.vertical, 6)
         .background {
             if isSelected, let selectionTint {
@@ -1196,8 +1226,7 @@ private struct FontFamilyRow: View, Equatable {
                     .fill(selectionTint.opacity(0.22))
             }
         }
-        // The system's accent selection is suppressed while the row draws its
-        // own veil, otherwise the blue fights the custom canvas color.
+        // Use the same row-sized highlight for every specimen palette.
         .background(TableRowEmphasisConfigurator(
             isEmphasized: selectionTint == nil,
             hidesSelectionHighlight: selectionTint != nil
@@ -1208,7 +1237,7 @@ private struct FontFamilyRow: View, Equatable {
         .simultaneousGesture(
             TapGesture(count: 2).onEnded { toggleExpanded() }
         )
-        .help(isExpanded ? "Double-click to hide styles" : "Double-click to show all styles")
+        .help(isExpanded ? "Double-click to hide styles" : "Double-click to show styles")
     }
 
     @ViewBuilder
@@ -1813,6 +1842,7 @@ private struct ComparisonView: View {
         .environmentObject(FontCatalog())
         .environmentObject(AppSettings())
         .environmentObject(PlaygroundStore())
+        .environmentObject(MixedPairDraft())
 }
 
 /// Reports the hosting `NSWindow` so menu commands can be routed to the key window.

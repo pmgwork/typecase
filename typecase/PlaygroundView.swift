@@ -1,12 +1,12 @@
 import AppKit
+import CoreText
 import SwiftUI
 
 /// The PlayGround window: a canvas of text blocks set in the library's fonts.
 ///
 /// The library's toolbar adds the current selection and brings this window
-/// forward; every block is edited in the trailing inspector, and the layouts
-/// live in `PlaygroundStore`, so the window can be closed and reopened without
-/// losing the page.
+/// forward; every block's typography is edited in the trailing inspector.
+/// Layouts live in `PlaygroundStore`, so closing the window keeps the page.
 struct PlaygroundView: View {
     @EnvironmentObject private var catalog: FontCatalog
     @EnvironmentObject private var settings: AppSettings
@@ -16,6 +16,9 @@ struct PlaygroundView: View {
     @State private var isRenaming = false
     @State private var renameText = ""
     @State private var isConfirmingDelete = false
+    @State private var copiedImage = false
+    @State private var copyFailed = false
+    @State private var copyFeedbackTask: Task<Void, Never>?
 
     private var layout: PlaygroundLayout { playground.currentLayout }
 
@@ -28,6 +31,9 @@ struct PlaygroundView: View {
             .frame(minWidth: 720, minHeight: 480)
             .navigationTitle(playground.currentLayout.name)
             .toolbar { toolbarItems }
+            .onAppear(perform: setStarterFont)
+            .onChange(of: catalog.familiesRevision) { _, _ in setStarterFont() }
+            .onChange(of: playground.currentLayoutID) { _, _ in setStarterFont() }
             .alert("Rename Layout", isPresented: $isRenaming) {
                 TextField("Name", text: $renameText)
                 Button("Rename") { playground.renameCurrentLayout(to: renameText) }
@@ -46,6 +52,16 @@ struct PlaygroundView: View {
             } message: {
                 Text("The layout’s blocks are removed.")
             }
+            .alert("Could Not Copy Image", isPresented: $copyFailed) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text("The layout could not be rendered as an image. Try again.")
+            }
+    }
+
+    private func setStarterFont() {
+        guard let reference = catalog.defaultPlaygroundFace() else { return }
+        playground.setStarterFontIfNeeded(reference)
     }
 
     @ToolbarContentBuilder
@@ -54,20 +70,25 @@ struct PlaygroundView: View {
             layoutMenu
         }
         ToolbarItem(placement: .navigation) {
-            Button {
-                playground.addBlock()
+            Menu {
+                ForEach(PlaygroundBlockRole.allCases) { role in
+                    Button("\(role.title) · \(role.description)") {
+                        playground.addBlock(role: role)
+                    }
+                }
             } label: {
                 Label("Add Block", systemImage: "plus")
             }
-            .help("Add a text block")
+            .help("Add a heading or paragraph after the selected block")
         }
         ToolbarItem(placement: .confirmationAction) {
             Button {
                 copyImage()
             } label: {
-                Label("Copy as Image", systemImage: "doc.on.clipboard")
+                Label(copiedImage ? "Copied" : "Copy as Image",
+                      systemImage: copiedImage ? "checkmark" : "doc.on.clipboard")
             }
-            .help("Copy the layout to the clipboard as an image")
+            .help(copiedImage ? "Image copied to clipboard" : "Copy the layout to the clipboard as an image")
         }
         ToolbarItem(placement: .confirmationAction) {
             Button {
@@ -120,10 +141,23 @@ struct PlaygroundView: View {
             settings: settings
         ))
         renderer.scale = 2
-        guard let image = renderer.nsImage else { return }
+        guard let image = renderer.nsImage else {
+            copyFailed = true
+            return
+        }
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
-        pasteboard.writeObjects([image])
+        guard pasteboard.writeObjects([image]) else {
+            copyFailed = true
+            return
+        }
+        copiedImage = true
+        copyFeedbackTask?.cancel()
+        copyFeedbackTask = Task {
+            try? await Task.sleep(for: .seconds(2))
+            guard !Task.isCancelled else { return }
+            copiedImage = false
+        }
     }
 }
 
@@ -144,11 +178,22 @@ private struct PlaygroundResolvedBlock {
         self.face = face
         self.variations = face.map { settings.variationValues(for: $0.postScriptName) }
 
-        let typed = block.text
-        if typed.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            text = settings.sample(for: family?.previewLanguage ?? .latin)
+        if block.text.isEmpty {
+            var language = family?.previewLanguage ?? .latin
+            // Some installed fonts have no CJK metadata in the catalog even
+            // though the chosen face supports one. Use that face to choose the
+            // placeholder rather than defaulting to English.
+            if language == .latin, let face {
+                let font = FontResolver.shared.nsFont(
+                    postScriptName: face.postScriptName, fileURL: face.fileURL, size: 12
+                )
+                let codes = CTFontCopySupportedLanguages(font as CTFont) as? [String] ?? []
+                let detected = FontLanguage.detected(in: codes)
+                language = FontLanguage.previewPriority.first { detected.contains($0) } ?? .latin
+            }
+            text = settings.sample(for: language)
         } else {
-            text = typed
+            text = block.text
         }
     }
 
@@ -162,9 +207,8 @@ private struct PlaygroundResolvedBlock {
     }
 }
 
-/// The canvas: the layout's blocks as a plain page. List selection is kept —
-/// it is the native way to choose, reorder, and delete a block — while its
-/// chrome is hidden so the specimens sit directly on the chosen background.
+/// The canvas: a list for scrolling and reordering blocks, without its native
+/// row selection paint. The focused text view chooses the inspector block.
 private struct PlaygroundCanvas: View {
     @EnvironmentObject private var catalog: FontCatalog
     @EnvironmentObject private var settings: AppSettings
@@ -172,19 +216,37 @@ private struct PlaygroundCanvas: View {
 
     var body: some View {
         let layout = playground.currentLayout
-        List(selection: $playground.selectedBlockID) {
+        List {
             ForEach(layout.blocks) { block in
                 PlaygroundBlockRow(
                     block: block,
                     resolved: PlaygroundResolvedBlock(block: block, catalog: catalog, settings: settings),
-                    textColor: textColor,
-                    isSelected: playground.selectedBlockID == block.id,
-                    selectionTint: selectionTint
+                    textColor: textColor
                 )
-                .tag(block.id)
                 .listRowSeparator(.hidden)
-                .listRowInsets(EdgeInsets(top: 8, leading: 28, bottom: 8, trailing: 28))
+                .listRowInsets(EdgeInsets(
+                    top: block.role.topSpacing, leading: 28,
+                    bottom: block.role.bottomSpacing, trailing: 28
+                ))
+                .listRowBackground(Color.clear)
+                .contentShape(.rect)
+                .simultaneousGesture(TapGesture().onEnded {
+                    if playground.selectedBlockID != block.id {
+                        playground.selectedBlockID = block.id
+                    }
+                })
                 .contextMenu {
+                    Menu("Element") {
+                        ForEach(PlaygroundBlockRole.allCases) { role in
+                            Button("\(role.title) · \(role.description)") {
+                                var updated = playground.block(id: block.id) ?? block
+                                updated.applyRole(role)
+                                playground.update(updated)
+                                playground.selectedBlockID = block.id
+                            }
+                        }
+                    }
+                    Divider()
                     Button("Duplicate Block") { playground.duplicateBlock(block.id) }
                     Button("Move Up") { playground.moveBlock(block.id, by: -1) }
                         .disabled(layout.blocks.first?.id == block.id)
@@ -198,9 +260,11 @@ private struct PlaygroundCanvas: View {
         }
         .listStyle(.inset)
         .scrollContentBackground(.hidden)
-        .environment(\.controlActiveState, .key)
         .background(paperColor)
         .onDeleteCommand {
+            // When a block or inspector text view owns the keyboard, Delete
+            // edits its text rather than deleting the entire block.
+            guard !(NSApp.keyWindow?.firstResponder is NSTextView) else { return }
             if let id = playground.selectedBlockID {
                 playground.removeBlock(id)
             }
@@ -231,48 +295,55 @@ private struct PlaygroundCanvas: View {
     private var textColor: Color {
         settings.previewTextColor ?? Color(nsColor: .labelColor)
     }
-
-    /// The veil drawn over the selected block while the canvas has a custom
-    /// color; `nil` keeps the system accent selection.
-    private var selectionTint: Color? {
-        guard settings.previewBackgroundColor != nil else { return nil }
-        return textColor
-    }
 }
 
 /// One block of the canvas: the text set in its face at its own size, line
 /// height, tracking, and alignment.
 private struct PlaygroundBlockRow: View {
+    @EnvironmentObject private var playground: PlaygroundStore
     let block: PlaygroundBlock
     let resolved: PlaygroundResolvedBlock
     let textColor: Color
-    let isSelected: Bool
-    let selectionTint: Color?
 
     var body: some View {
-        Text(resolved.text.isEmpty ? " " : resolved.text)
-            .font(resolved.font(size: CGFloat(block.size)))
-            .lineSpacing(CGFloat(block.size) * CGFloat(max(block.lineHeight - 1, 0)))
-            .tracking(CGFloat(block.tracking))
-            .multilineTextAlignment(block.alignment.textAlignment)
-            .frame(maxWidth: .infinity, alignment: block.alignment.frameAlignment)
-            .foregroundStyle(textColor)
-            .padding(.vertical, 10)
-            .padding(.horizontal, 12)
-            .background {
-                if isSelected, let selectionTint {
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(selectionTint.opacity(0.18))
+        VStack(alignment: .leading, spacing: 4) {
+            Text(block.role.title)
+                .font(.caption)
+                .foregroundStyle(textColor.opacity(0.55))
+            PlaygroundTextEditor(
+                text: textBinding,
+                placeholder: block.text.isEmpty ? resolved.text : "",
+                postScriptName: resolved.face?.postScriptName,
+                fileURL: resolved.face?.fileURL,
+                variations: resolved.variations,
+                size: CGFloat(block.size),
+                lineHeight: block.lineHeight,
+                tracking: block.tracking,
+                alignment: block.alignment,
+                textColor: textColor,
+                onBeginEditing: {
+                    if playground.selectedBlockID != block.id {
+                        playground.selectedBlockID = block.id
+                    }
                 }
+            )
+            .frame(maxWidth: .infinity, alignment: block.alignment.frameAlignment)
+        }
+        .padding(.vertical, 4)
+        .padding(.horizontal, 12)
+        .contentShape(.rect)
+        .help("\(block.role.title) · \(helpText) · Click to edit text")
+    }
+
+    private var textBinding: Binding<String> {
+        Binding(
+            get: { playground.block(id: block.id)?.text ?? block.text },
+            set: { text in
+                guard var updated = playground.block(id: block.id) else { return }
+                updated.text = text
+                playground.update(updated)
             }
-            // The system's accent selection is suppressed while the block
-            // draws its own veil, otherwise the blue fights the canvas color.
-            .background(TableRowEmphasisConfigurator(
-                isEmphasized: selectionTint == nil,
-                hidesSelectionHighlight: selectionTint != nil
-            ))
-            .contentShape(.rect)
-            .help(helpText)
+        )
     }
 
     private var helpText: String {
@@ -282,7 +353,7 @@ private struct PlaygroundBlockRow: View {
     }
 }
 
-/// The trailing panel: the selected block's text and typography.
+/// The trailing panel: the selected block's font and typography controls.
 private struct PlaygroundBlockInspector: View {
     @EnvironmentObject private var catalog: FontCatalog
     @EnvironmentObject private var settings: AppSettings
@@ -295,12 +366,19 @@ private struct PlaygroundBlockInspector: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
                     blockHeader(block)
-                    textSection(block: block, resolved: resolved)
-                    if !missingCharacters.isEmpty {
-                        missingCharactersNotice
+                    field("Element") {
+                        Picker("Element", selection: roleBinding(block)) {
+                            ForEach(PlaygroundBlockRole.allCases) { role in
+                                Text("\(role.title) · \(role.description)").tag(role)
+                            }
+                        }
+                        .labelsHidden()
                     }
                     Divider()
                     fontSection(block)
+                    if !missingCharacters.isEmpty {
+                        missingCharactersNotice
+                    }
                     Divider()
                     typographySection(block)
                 }
@@ -332,6 +410,16 @@ private struct PlaygroundBlockInspector: View {
                 Button("Move Down") { playground.moveBlock(block.id, by: 1) }
                     .disabled(playground.currentLayout.blocks.last?.id == block.id)
                 Divider()
+                Menu("Sample Text") {
+                    ForEach(FontLanguage.allCases) { language in
+                        Button(language.title) {
+                            update(block) { $0.text = settings.sample(for: language) }
+                        }
+                    }
+                    Divider()
+                    Button("Clear Text") { update(block) { $0.text = "" } }
+                }
+                Divider()
                 Button("Delete Block", role: .destructive) { playground.removeBlock(block.id) }
             } label: {
                 Label("Block Actions", systemImage: "ellipsis.circle")
@@ -341,48 +429,7 @@ private struct PlaygroundBlockInspector: View {
             .buttonStyle(.borderless)
             .menuIndicator(.hidden)
             .fixedSize()
-            .help("Duplicate, reorder, or delete this block")
-        }
-    }
-
-    private func textSection(block: PlaygroundBlock, resolved: PlaygroundResolvedBlock) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 8) {
-                Text("Text")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                Spacer(minLength: 8)
-                Menu("Sample Text") {
-                    ForEach(FontLanguage.allCases) { language in
-                        Button(language.title) {
-                            update(block) { $0.text = settings.sample(for: language) }
-                        }
-                    }
-                    Divider()
-                    Button("Clear") { update(block) { $0.text = "" } }
-                }
-                .menuStyle(.borderlessButton)
-                .fixedSize()
-                .help("Fill the block with a language sample")
-            }
-
-            TextEditor(text: textBinding(block))
-                .font(.body)
-                .frame(height: 110)
-                .scrollContentBackground(.hidden)
-                .padding(4)
-                .background(
-                    Color(nsColor: .textBackgroundColor),
-                    in: RoundedRectangle(cornerRadius: 6, style: .continuous)
-                )
-                .overlay {
-                    RoundedRectangle(cornerRadius: 6, style: .continuous)
-                        .strokeBorder(Color(nsColor: .separatorColor))
-                }
-
-            Text("Empty text follows the sample for the font’s language.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            .help("Duplicate, reorder, choose sample text, or delete this block")
         }
     }
 
@@ -483,17 +530,17 @@ private struct PlaygroundBlockInspector: View {
 
     // MARK: - Bindings
 
-    private func update(_ block: PlaygroundBlock, _ mutate: (inout PlaygroundBlock) -> Void) {
-        var updated = block
-        mutate(&updated)
-        playground.update(updated)
+    private func roleBinding(_ block: PlaygroundBlock) -> Binding<PlaygroundBlockRole> {
+        Binding(
+            get: { playground.block(id: block.id)?.role ?? block.role },
+            set: { newRole in update(block) { $0.applyRole(newRole) } }
+        )
     }
 
-    private func textBinding(_ block: PlaygroundBlock) -> Binding<String> {
-        Binding(
-            get: { playground.block(id: block.id)?.text ?? block.text },
-            set: { newValue in update(block) { $0.text = newValue } }
-        )
+    private func update(_ block: PlaygroundBlock, _ mutate: (inout PlaygroundBlock) -> Void) {
+        var updated = playground.block(id: block.id) ?? block
+        mutate(&updated)
+        playground.update(updated)
     }
 
     /// Choosing a family resets the style to the family's preview face, so the
@@ -593,7 +640,7 @@ private struct PlaygroundPrintPage: View {
     let settings: AppSettings
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 28) {
+        VStack(alignment: .leading, spacing: 0) {
             ForEach(layout.blocks) { block in
                 let resolved = PlaygroundResolvedBlock(block: block, catalog: catalog, settings: settings)
                 Text(resolved.text.isEmpty ? " " : resolved.text)
@@ -603,6 +650,9 @@ private struct PlaygroundPrintPage: View {
                     .multilineTextAlignment(block.alignment.textAlignment)
                     .foregroundStyle(settings.previewTextColor ?? Color(nsColor: .labelColor))
                     .frame(maxWidth: .infinity, alignment: block.alignment.frameAlignment)
+                    .padding(.vertical, 4)
+                    .padding(.top, block.role.topSpacing)
+                    .padding(.bottom, block.role.bottomSpacing)
             }
         }
         .frame(width: 900, alignment: .leading)

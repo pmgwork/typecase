@@ -18,8 +18,7 @@ struct MixedPairRow: View, Equatable {
     let previewSize: Double
     let previewTextColor: Color?
     let isSelected: Bool
-    /// The selection veil while a custom canvas color paints the list; `nil`
-    /// keeps the system accent selection.
+    /// The selection veil shared with the regular font rows.
     let selectionTint: Color?
     /// Whether every referenced font still resolves.
     let isResolvable: Bool
@@ -75,6 +74,7 @@ struct MixedPairRow: View, Equatable {
                 textColor: previewTextColor
             )
         }
+        .padding(.horizontal, 12)
         .padding(.vertical, 6)
         .background {
             if isSelected, let selectionTint {

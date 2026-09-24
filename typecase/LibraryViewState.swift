@@ -156,6 +156,16 @@ final class LibraryViewState: ObservableObject {
         activationFilter = .all
     }
 
+    /// Keep the inspector in sync with the rows currently shown in the list.
+    func reconcileVisibleSelection(with ids: [FontFamily.ID]) {
+        let retained = selection.intersection(ids)
+        if retained != selection {
+            selection = retained.isEmpty ? ids.first.map { [$0] } ?? [] : retained
+        } else if selection.isEmpty, let first = ids.first {
+            selection = [first]
+        }
+    }
+
     // MARK: - Character coverage
 
     /// The state changes that require a new coverage computation.

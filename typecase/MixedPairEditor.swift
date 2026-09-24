@@ -1,3 +1,4 @@
+import AppKit
 import Combine
 import SwiftUI
 
@@ -14,11 +15,19 @@ final class MixedPairDraft: ObservableObject {
     @Published private var selections: [MixedScript: FontFaceReference] = [:]
     /// The text the window's specimen previews. Empty shows the samples.
     @Published var previewText = ""
+    @Published private(set) var savedPairSelectionID: FontFamily.ID?
+    weak var originatingWindow: NSWindow?
 
     /// Seeds the editor with the fonts a new pair starts from.
-    func begin(with defaults: [MixedScript: FontFaceReference]) {
+    func begin(with defaults: [MixedScript: FontFaceReference], from window: NSWindow?) {
         selections = defaults
         previewText = ""
+        originatingWindow = window
+        savedPairSelectionID = nil
+    }
+
+    func didSave(_ pair: FontPair) {
+        savedPairSelectionID = pair.selectionID
     }
 
     func selection(for script: MixedScript) -> FontFaceReference? {
@@ -109,45 +118,39 @@ struct MixedPairEditorView: View {
         .padding(20)
     }
 
-    /// One part's font picker: the families that can fill it, in name order,
-    /// with the current choice shown in a native pop-up button. Choosing a
-    /// family resets the weight to its default mixed face (Regular, or W4 for
-    /// Hiragino Sans).
+    /// One part's font pop-up: the families that can fill it, in name order,
+    /// with a compact native control matching the style pop-up. Choosing a
+    /// family resets the weight to its preferred mixed face (W5 or Medium when
+    /// that style exists).
     private func fontMenu(
         _ script: MixedScript,
         selection: Binding<FontFamily.ID?>
     ) -> some View {
-        Picker(script.title, selection: selection) {
-            Text("None").tag(FontFamily.ID?.none)
-            ForEach(catalog.families(for: script)) { family in
-                Text(family.name).tag(Optional(family.id))
-            }
-        }
-        .pickerStyle(.menu)
-        .labelsHidden()
-        .frame(maxWidth: .infinity, alignment: .leading)
+        MixedPairPopUp(
+            title: "\(script.title) font",
+            options: [MixedPairPopUp.Option(id: nil, title: "None")]
+                + catalog.families(for: script).map { .init(id: $0.id, title: $0.name) },
+            selection: selection
+        )
+        .frame(width: MixedPairPopUp.width, height: MixedPairPopUp.height)
         .help("Choose the \(script.title.lowercased()) font")
     }
 
-    /// One part's weight picker: the styles of the chosen family, light to
-    /// heavy. Disabled while no family is chosen.
+    /// Every style pop-up keeps the same width as its font pop-up, even when its
+    /// current style name is short (e.g. W6 or Regular).
     private func styleMenu(
         _ script: MixedScript,
         selection: Binding<String?>
     ) -> some View {
-        Picker("\(script.title) style", selection: selection) {
-            if let family = family(for: script) {
-                ForEach(family.faces) { face in
-                    Text(face.styleName).tag(Optional(face.postScriptName))
-                }
-            } else {
-                Text("No style").tag(String?.none)
-            }
-        }
-        .pickerStyle(.menu)
-        .labelsHidden()
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .disabled(family(for: script) == nil)
+        let family = family(for: script)
+        return MixedPairPopUp(
+            title: "\(script.title) style",
+            options: family?.faces.map { .init(id: $0.postScriptName, title: $0.styleName) }
+                ?? [.init(id: nil, title: "No style")],
+            selection: selection,
+            enabled: family != nil
+        )
+        .frame(width: MixedPairPopUp.width, height: MixedPairPopUp.height)
         .help("Choose the \(script.title.lowercased()) weight")
     }
 
@@ -162,7 +165,7 @@ struct MixedPairEditorView: View {
             get: { draft.selection(for: script)?.familyID },
             set: { familyID in
                 guard let familyID, let family = catalog.familyByID[familyID],
-                      let face = family.defaultMixedFace ?? family.faces.first else {
+                       let face = family.defaultMixedFace(for: script) else {
                     draft.setSelection(nil, for: script)
                     return
                 }
@@ -257,8 +260,99 @@ struct MixedPairEditorView: View {
                 postScriptName: face.postScriptName
             )
         }
-        guard catalog.addMixedPair(references: references) != nil else { return }
+        guard let pair = catalog.addMixedPair(references: references) else { return }
+        draft.didSave(pair)
         dismiss()
+    }
+}
+
+/// A native AppKit pop-up with a consistent, compact width. SwiftUI's menu
+/// Picker sizes its button to its current title, leaving short weights much
+/// narrower than the font selector even with the same frame on both views.
+private struct MixedPairPopUp: NSViewRepresentable {
+    static let width: CGFloat = 200
+    static let height: CGFloat = 34
+
+    struct Option: Equatable {
+        let id: String?
+        let title: String
+    }
+
+    let title: String
+    let options: [Option]
+    @Binding var selection: String?
+    var enabled = true
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(selection: $selection)
+    }
+
+    func makeNSView(context: Context) -> PopUpContainer {
+        let container = PopUpContainer()
+        let button = container.button
+        button.target = context.coordinator
+        button.action = #selector(Coordinator.didChange(_:))
+        button.cell?.lineBreakMode = .byTruncatingTail
+        return container
+    }
+
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView: PopUpContainer, context: Context) -> CGSize? {
+        CGSize(width: Self.width, height: Self.height)
+    }
+
+    func updateNSView(_ container: PopUpContainer, context: Context) {
+        let button = container.button
+        let coordinator = context.coordinator
+        coordinator.selection = $selection
+        if coordinator.options != options {
+            button.removeAllItems()
+            for option in options { button.addItem(withTitle: option.title) }
+            coordinator.options = options
+        }
+        let selectedIndex = options.firstIndex { $0.id == selection } ?? 0
+        if button.indexOfSelectedItem != selectedIndex {
+            button.selectItem(at: selectedIndex)
+        }
+        button.isEnabled = enabled
+        button.setAccessibilityLabel(title)
+    }
+
+    /// Keep the button's actual frame inside the fixed-width hosting view.
+    /// A bare NSPopUpButton can report a wider intrinsic size based on its
+    /// longest menu item and draw outside SwiftUI's 200 pt frame.
+    final class PopUpContainer: NSView {
+        let button = NSPopUpButton(frame: .zero, pullsDown: false)
+
+        init() {
+            super.init(frame: .zero)
+            button.translatesAutoresizingMaskIntoConstraints = false
+            button.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+            addSubview(button)
+            NSLayoutConstraint.activate([
+                button.leadingAnchor.constraint(equalTo: leadingAnchor),
+                button.trailingAnchor.constraint(equalTo: trailingAnchor),
+                button.centerYAnchor.constraint(equalTo: centerYAnchor),
+                button.heightAnchor.constraint(equalToConstant: 26),
+            ])
+        }
+
+        required init?(coder: NSCoder) {
+            fatalError("init(coder:) has not been implemented")
+        }
+    }
+
+    final class Coordinator: NSObject {
+        var selection: Binding<String?>
+        var options: [Option] = []
+
+        init(selection: Binding<String?>) {
+            self.selection = selection
+        }
+
+        @objc func didChange(_ button: NSPopUpButton) {
+            guard options.indices.contains(button.indexOfSelectedItem) else { return }
+            selection.wrappedValue = options[button.indexOfSelectedItem].id
+        }
     }
 }
 
@@ -271,7 +365,7 @@ struct NewMixedPairButton: View {
 
     var body: some View {
         Button {
-            draft.begin(with: catalog.defaultMixedPairFamilies())
+            draft.begin(with: catalog.defaultMixedPairFamilies(), from: NSApp.keyWindow)
             openWindow(id: MixedPairWindow.id)
         } label: {
             Label("Mixed Font", systemImage: "rectangle.on.rectangle")

@@ -382,15 +382,25 @@ final class FontCatalog: ObservableObject {
 
     /// The fonts a new pair starts with: the macOS standard for each part of
     /// the mix, as far as it is installed. Each part starts from the family's
-    /// default mixed face (Regular, or W4 for Hiragino Sans).
+    /// preferred style (W5 for Japanese, Medium for the other parts), when available.
     func defaultMixedPairFamilies() -> [MixedScript: FontFaceReference] {
         var result: [MixedScript: FontFaceReference] = [:]
         for script in MixedScript.allCases {
             guard let family = family(matching: Self.defaultMixedFontNames[script] ?? []),
-                  let face = family.defaultMixedFace else { continue }
+                  let face = family.defaultMixedFace(for: script) else { continue }
             result[script] = FontFaceReference(familyID: family.id, postScriptName: face.postScriptName)
         }
         return result
+    }
+
+    /// The Japanese face used by a blank PlayGround type scale. Look it up in
+    /// the catalog so the inspector and the specimen resolve the same font.
+    func defaultPlaygroundFace() -> FontFaceReference? {
+        guard let family = family(matching: [
+            "Hiragino Sans", "ヒラギノ角ゴシック",
+            "Hiragino Kaku Gothic ProN", "ヒラギノ角ゴ ProN",
+        ]), let face = family.defaultMixedFace(for: .japanese) else { return nil }
+        return FontFaceReference(familyID: family.id, postScriptName: face.postScriptName)
     }
 
     /// The first installed family whose name matches one of the candidates,

@@ -178,14 +178,22 @@ nonisolated struct FontFamily: Identifiable, Hashable, Sendable {
     var previewFace: FontFace? {
         faces.first(where: { $0.styleName.localizedCaseInsensitiveContains("regular") }) ?? faces.first
     }
-    /// The face a new mixed pair starts from: the Regular style, or the
-    /// weight closest to 400 when no style is named Regular. Hiragino Sans
-    /// names its styles W0–W9, so this picks W4 instead of the lightest.
+    /// Fallback for a mixed pair when its preferred script-specific style is
+    /// missing: Regular, or the face whose weight is closest to 400.
     var defaultMixedFace: FontFace? {
         if let regular = faces.first(where: { $0.styleName.localizedCaseInsensitiveContains("regular") }) {
             return regular
         }
         return faces.min { abs($0.weight - 400) < abs($1.weight - 400) }
+    }
+
+    /// The starting style for a part of a new mixed pair. Japanese uses W5;
+    /// English, numbers, and symbols use Medium when those styles are present.
+    func defaultMixedFace(for script: MixedScript) -> FontFace? {
+        let preferredStyle = script == .japanese ? "W5" : "Medium"
+        return faces.first {
+            $0.styleName.localizedCaseInsensitiveCompare(preferredStyle) == .orderedSame
+        } ?? defaultMixedFace
     }
 }
 
