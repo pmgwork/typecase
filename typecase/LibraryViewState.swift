@@ -314,6 +314,7 @@ final class LibraryViewState: ObservableObject {
             case .favorites: return catalog.favorites.contains(family.id)
             case .system: return family.source == .system
             case .local: return family.source == .local
+            case .duplicates: return catalog.duplicatesByFamily[family.id] != nil
             default: return false
             }
         case .systemScope(let scope):

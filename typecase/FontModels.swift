@@ -197,6 +197,28 @@ nonisolated struct FontFamily: Identifiable, Hashable, Sendable {
     }
 }
 
+/// One file that provides a face whose PostScript name another file also uses.
+nonisolated struct FontFileCopy: Identifiable, Hashable, Sendable {
+    let url: URL
+    let source: FontSource
+    /// Whether this is the file Core Text resolved the name to at the last
+    /// scan, i.e. the copy applications get when they ask for the name.
+    let isInUse: Bool
+
+    var id: URL { url }
+}
+
+/// A face whose PostScript name is provided by more than one font file. Apps
+/// address fonts by that name, so only one of the copies can be used.
+nonisolated struct FontDuplicate: Identifiable, Hashable, Sendable {
+    let postScriptName: String
+    let styleName: String
+    /// The copies in a stable order: the one in use first, then by path.
+    let copies: [FontFileCopy]
+
+    var id: String { postScriptName }
+}
+
 nonisolated struct FontFolderNode: Identifiable, Hashable, Codable, Sendable {
     let url: URL
     let children: [FontFolderNode]?
@@ -216,6 +238,8 @@ nonisolated struct LibrarySection: Hashable, Identifiable, Sendable {
     static let local = LibrarySection(rawValue: "local")
     /// The saved Japanese + Latin combinations.
     static let mixed = LibrarySection(rawValue: "mixed")
+    /// Families with a face that more than one font file provides.
+    static let duplicates = LibrarySection(rawValue: "duplicates")
 
     static func provider(_ provider: FontProvider) -> LibrarySection {
         LibrarySection(rawValue: provider.id)
@@ -228,7 +252,7 @@ nonisolated struct LibrarySection: Hashable, Identifiable, Sendable {
     /// Whether this raw value names a section this build can show. A persisted
     /// selection from an older or newer build must not become a blank row.
     var isKnown: Bool {
-        provider != nil || [.all, .favorites, .system, .local, .mixed].contains(self)
+        provider != nil || [.all, .favorites, .system, .local, .mixed, .duplicates].contains(self)
     }
 
     var title: String {
@@ -239,6 +263,7 @@ nonisolated struct LibrarySection: Hashable, Identifiable, Sendable {
         case .system: return "System Fonts"
         case .local: return "Local Library"
         case .mixed: return "Mixed Fonts"
+        case .duplicates: return "Duplicates"
         default: return rawValue
         }
     }
@@ -251,6 +276,7 @@ nonisolated struct LibrarySection: Hashable, Identifiable, Sendable {
         case .system: return .symbol("macbook")
         case .local: return .symbol("folder")
         case .mixed: return .symbol("rectangle.on.rectangle")
+        case .duplicates: return .symbol("square.on.square")
         default: return .symbol("textformat")
         }
     }

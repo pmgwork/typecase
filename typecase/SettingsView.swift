@@ -92,6 +92,11 @@ private struct SidebarSettingsView: View {
                     isOn: $settings.showLocalSection
                 )
                 SidebarItemToggle(
+                    title: LibrarySection.duplicates.title,
+                    icon: LibrarySection.duplicates.icon,
+                    isOn: $settings.showDuplicatesSection
+                )
+                SidebarItemToggle(
                     title: LibrarySection.mixed.title,
                     icon: LibrarySection.mixed.icon,
                     isOn: $settings.showMixedSection
