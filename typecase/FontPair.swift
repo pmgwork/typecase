@@ -97,6 +97,23 @@ nonisolated enum MixedScript: String, Codable, CaseIterable, Hashable, Sendable 
         case .symbols: "Symbols"
         }
     }
+
+    /// Japanese and English are what a pair is named by; the others fall
+    /// back to another part's font when left unset.
+    var isRequired: Bool {
+        self == .japanese || self == .latin
+    }
+
+    /// A few characters of the part, drawn beside its pop-ups so each font
+    /// can be told apart before looking at the full specimen.
+    var sampleGlyphs: String {
+        switch self {
+        case .japanese: "あア亜"
+        case .latin: "Aa"
+        case .numbers: "123"
+        case .symbols: "&?¥"
+        }
+    }
 }
 
 /// One face of a mixed specimen and the axis values it is drawn with.

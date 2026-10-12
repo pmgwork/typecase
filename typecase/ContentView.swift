@@ -228,7 +228,8 @@ private struct ToolbarSearchField: NSViewRepresentable {
 }
 
 /// Compact preview-size control for the toolbar: small “A”, slider, large “A”.
-private struct PreviewSizeControl: View {
+/// Also used by the mixed-pair window for its own specimen size.
+struct PreviewSizeControl: View {
     @Binding var size: Double
 
     /// A continuous slider keeps the system from drawing step tick marks below

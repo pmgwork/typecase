@@ -15,6 +15,9 @@ final class MixedPairDraft: ObservableObject {
     @Published private var selections: [MixedScript: FontFaceReference] = [:]
     /// The text the window's specimen previews. Empty shows the samples.
     @Published var previewText = ""
+    /// The window's own specimen size; `nil` follows the library's preview
+    /// size, which this window never changes.
+    @Published var previewSize: Double?
     @Published private(set) var savedPairSelectionID: FontFamily.ID?
     weak var originatingWindow: NSWindow?
 
@@ -22,6 +25,7 @@ final class MixedPairDraft: ObservableObject {
     func begin(with defaults: [MixedScript: FontFaceReference], from window: NSWindow?) {
         selections = defaults
         previewText = ""
+        previewSize = nil
         originatingWindow = window
         savedPairSelectionID = nil
     }
@@ -75,6 +79,9 @@ struct MixedPairEditorView: View {
         // Cancel and Save live in the window's own toolbar, at the top right, in
         // the same glass capsules the library window's toolbar items use.
         .toolbar {
+            ToolbarItem(placement: .navigation) {
+                PreviewSizeControl(size: previewSizeBinding)
+            }
             ToolbarItem(placement: .cancellationAction) {
                 Button("Cancel") { dismiss() }
                     .keyboardShortcut(.cancelAction)
@@ -90,6 +97,14 @@ struct MixedPairEditorView: View {
         .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
     }
 
+    private var previewSize: Double {
+        draft.previewSize ?? settings.previewSize
+    }
+
+    private var previewSizeBinding: Binding<Double> {
+        Binding(get: { previewSize }, set: { draft.previewSize = $0 })
+    }
+
     private var canvasColor: Color {
         settings.previewBackgroundColor ?? Color(nsColor: .windowBackgroundColor)
     }
@@ -100,22 +115,67 @@ struct MixedPairEditorView: View {
     /// fixed width here: the column width owns the sizing, so dragging the
     /// divider never fights the content.
     private var scriptList: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            ForEach(MixedScript.allCases, id: \.self) { script in
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(script.title)
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                    fontMenu(script, selection: familyBinding(for: script))
-                    styleMenu(script, selection: faceBinding(for: script))
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
+        let faces = draft.faces(in: catalog)
+        return VStack(alignment: .leading, spacing: 14) {
+            partGroup("Required", scripts: MixedScript.allCases.filter(\.isRequired), faces: faces)
+            Divider()
+            partGroup("Optional", scripts: MixedScript.allCases.filter { !$0.isRequired }, faces: faces)
             // Push the rows to the top; without the spacer the stack centers
             // itself in the sidebar column.
             Spacer(minLength: 0)
         }
         .padding(20)
+    }
+
+    /// The parts a pair needs, or the ones that fall back when unset, under a
+    /// small heading so the two kinds read apart.
+    private func partGroup(
+        _ title: String,
+        scripts: [MixedScript],
+        faces: [MixedScript: FontFace]
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text(title)
+                .font(.headline)
+            ForEach(scripts, id: \.self) { script in
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Text(script.title)
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                        Spacer(minLength: 8)
+                        partSample(script, faces: faces)
+                    }
+                    .frame(width: MixedPairPopUp.width)
+                    fontMenu(script, selection: familyBinding(for: script))
+                    styleMenu(script, selection: faceBinding(for: script))
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+    }
+
+    /// A few characters of the part in the face that actually draws it: its
+    /// own, or for an unset optional part, the face it falls back to.
+    @ViewBuilder
+    private func partSample(_ script: MixedScript, faces: [MixedScript: FontFace]) -> some View {
+        let source = MixedText.fallbackScripts(for: script).first { faces[$0] != nil }
+        if let source, let face = faces[source] {
+            Text(script.sampleGlyphs)
+                .font(FontResolver.shared.previewFont(
+                    postScriptName: face.postScriptName,
+                    fileURL: face.fileURL,
+                    size: 16,
+                    variations: settings.variationValues(for: face)
+                ))
+                .foregroundStyle(source != script
+                    ? AnyShapeStyle(.tertiary)
+                    : AnyShapeStyle(settings.previewTextColor ?? Color(nsColor: .labelColor)))
+                .lineLimit(1)
+                .help(source == script
+                    ? "\(script.title) sample"
+                    : "Automatic: drawn with the \(source.title) font")
+        }
     }
 
     /// One part's font pop-up: the families that can fill it, in name order,
@@ -128,12 +188,23 @@ struct MixedPairEditorView: View {
     ) -> some View {
         MixedPairPopUp(
             title: "\(script.title) font",
-            options: [MixedPairPopUp.Option(id: nil, title: "None")]
+            options: [MixedPairPopUp.Option(id: nil, title: script.isRequired ? "None" : "Automatic")]
                 + catalog.families(for: script).map { .init(id: $0.id, title: $0.name) },
             selection: selection
         )
         .frame(width: MixedPairPopUp.width, height: MixedPairPopUp.height)
-        .help("Choose the \(script.title.lowercased()) font")
+        .help(fontHelp(for: script))
+    }
+
+    private func fontHelp(for script: MixedScript) -> String {
+        switch script {
+        case .japanese, .latin:
+            "Choose the \(script.title.lowercased()) font; a pair needs one"
+        case .numbers:
+            "Choose the numbers font; Automatic draws digits with the Symbols font, or the English font"
+        case .symbols:
+            "Choose the symbols font; Automatic draws symbols with the Numbers font, or the English font"
+        }
     }
 
     /// Every style pop-up keeps the same width as its font pop-up, even when its
@@ -213,7 +284,7 @@ struct MixedPairEditorView: View {
             MixedTextEditor(
                 text: $draft.previewText,
                 placeholder: settings.effectiveMixedText(entered: ""),
-                size: settings.previewSize,
+                size: previewSize,
                 fonts: fonts(for: faces),
                 textColor: settings.previewTextColor
             )

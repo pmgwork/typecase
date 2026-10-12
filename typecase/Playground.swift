@@ -190,9 +190,19 @@ nonisolated struct PlaygroundBlock: Identifiable, Codable, Equatable, Sendable {
     mutating func applyRole(_ newRole: PlaygroundBlockRole) {
         guard role != newRole else { return }
         role = newRole
-        size = newRole.size
-        lineHeight = newRole.lineHeight
-        tracking = newRole.tracking
+        resetTypographyToRole()
+    }
+
+    /// Whether size, line height, and tracking still carry the role's values.
+    var usesRoleTypography: Bool {
+        size == role.size && lineHeight == role.lineHeight && tracking == role.tracking
+    }
+
+    /// Returns size, line height, and tracking to the role's starting values.
+    mutating func resetTypographyToRole() {
+        size = role.size
+        lineHeight = role.lineHeight
+        tracking = role.tracking
     }
 
     private enum CodingKeys: String, CodingKey {

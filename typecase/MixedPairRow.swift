@@ -50,7 +50,7 @@ struct MixedPairRow: View, Equatable {
                 Text(name)
                     .font(.body.weight(.medium))
                     .lineLimit(1)
-                Text("\(pair.references.count) fonts")
+                Text(styleLabel)
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
@@ -92,6 +92,15 @@ struct MixedPairRow: View, Equatable {
         ))
         .contentShape(.rect)
         .help(name)
+    }
+
+    /// The styles of the two named fonts (e.g. "W5 · Medium"), so pairs of the
+    /// same families in different weights read apart. Falls back to the font
+    /// count while neither style resolves.
+    private var styleLabel: String {
+        let styles = [MixedScript.japanese, .latin].compactMap { faces[$0]?.styleName }
+            .filter { !$0.isEmpty }
+        return styles.isEmpty ? "\(pair.references.count) fonts" : styles.joined(separator: " · ")
     }
 
     /// A pair is named by its two required fonts.

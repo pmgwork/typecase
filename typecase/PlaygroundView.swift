@@ -88,7 +88,8 @@ struct PlaygroundView: View {
                 Label(copiedImage ? "Copied" : "Copy as Image",
                       systemImage: copiedImage ? "checkmark" : "doc.on.clipboard")
             }
-            .help(copiedImage ? "Image copied to clipboard" : "Copy the layout to the clipboard as an image")
+            .keyboardShortcut("c", modifiers: [.command, .option])
+            .help(copiedImage ? "Image copied to clipboard" : "Copy the layout to the clipboard as an image (⌥⌘C)")
         }
         ToolbarItem(placement: .confirmationAction) {
             Button {
@@ -96,7 +97,8 @@ struct PlaygroundView: View {
             } label: {
                 Label("Inspector", systemImage: "info.circle")
             }
-            .help("Show or hide the block settings")
+            .keyboardShortcut("i", modifiers: [.command, .option])
+            .help("Show or hide the block settings (⌥⌘I)")
         }
     }
 
@@ -221,7 +223,8 @@ private struct PlaygroundCanvas: View {
                 PlaygroundBlockRow(
                     block: block,
                     resolved: PlaygroundResolvedBlock(block: block, catalog: catalog, settings: settings),
-                    textColor: textColor
+                    textColor: textColor,
+                    isSelected: playground.selectedBlockID == block.id
                 )
                 .listRowSeparator(.hidden)
                 .listRowInsets(EdgeInsets(
@@ -360,12 +363,11 @@ private struct PlaygroundBlockRow: View {
     let block: PlaygroundBlock
     let resolved: PlaygroundResolvedBlock
     let textColor: Color
+    let isSelected: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(block.role.title)
-                .font(.caption)
-                .foregroundStyle(textColor.opacity(0.55))
+            caption
             PlaygroundTextEditor(
                 text: textBinding,
                 placeholder: block.text.isEmpty ? resolved.text : "",
@@ -400,6 +402,18 @@ private struct PlaygroundBlockRow: View {
                 playground.update(updated)
             }
         )
+    }
+
+    /// The role label; the active block adds its font and size, so the block
+    /// the inspector edits reads on the canvas without a selection background.
+    private var caption: some View {
+        Text(isSelected
+            ? "\(block.role.title) · \(helpText) · \(Int(block.size.rounded())) pt"
+            : block.role.title)
+            .font(.caption)
+            .foregroundStyle(textColor.opacity(isSelected ? 0.8 : 0.55))
+            .lineLimit(1)
+            .truncationMode(.middle)
     }
 
     private var helpText: String {
@@ -524,26 +538,42 @@ private struct PlaygroundBlockInspector: View {
 
     private func typographySection(_ block: PlaygroundBlock) -> some View {
         VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 8) {
+                Text("Typography")
+                    .font(.headline)
+                Spacer(minLength: 8)
+                // Only offered once the values have left the role's scale.
+                if !block.usesRoleTypography {
+                    Button("Reset to \(block.role.title)") {
+                        update(block) { $0.resetTypographyToRole() }
+                    }
+                    .buttonStyle(.link)
+                    .help("Return size, line height, and tracking to the \(block.role.description) defaults")
+                }
+            }
             slider(
                 "Size",
                 value: numberBinding(block, \.size),
                 range: PlaygroundMetrics.sizeRange,
                 step: 1,
-                valueText: "\(Int(block.size.rounded())) pt"
+                fractionDigits: 0,
+                unit: "pt"
             )
             slider(
                 "Line Height",
                 value: numberBinding(block, \.lineHeight),
                 range: PlaygroundMetrics.lineHeightRange,
                 step: 0.05,
-                valueText: String(format: "%.2f", block.lineHeight)
+                fractionDigits: 2,
+                unit: "×"
             )
             slider(
                 "Tracking",
                 value: numberBinding(block, \.tracking),
                 range: PlaygroundMetrics.trackingRange,
                 step: 0.1,
-                valueText: String(format: "%.1f pt", block.tracking)
+                fractionDigits: 1,
+                unit: "pt"
             )
             field("Alignment") {
                 Picker("Alignment", selection: alignmentBinding(block)) {
@@ -666,23 +696,40 @@ private struct PlaygroundBlockInspector: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
+    /// A slider with a number field beside it, so a value can be dragged or
+    /// typed exactly. Typed values are clamped into the slider's range.
     private func slider(
         _ title: String,
         value: Binding<Double>,
         range: ClosedRange<Double>,
         step: Double,
-        valueText: String
+        fractionDigits: Int,
+        unit: String
     ) -> some View {
-        field(title) {
+        let clamped = Binding(
+            get: { value.wrappedValue },
+            set: { value.wrappedValue = PlaygroundMetrics.clamp($0, to: range) }
+        )
+        return field(title) {
             HStack(spacing: 8) {
                 Slider(value: value, in: range, step: step)
                     .controlSize(.small)
                     .labelsHidden()
                     .accessibilityLabel(title)
-                Text(valueText)
-                    .monospacedDigit()
+                TextField(
+                    title,
+                    value: clamped,
+                    format: .number.precision(.fractionLength(fractionDigits))
+                )
+                .labelsHidden()
+                .textFieldStyle(.roundedBorder)
+                .controlSize(.small)
+                .multilineTextAlignment(.trailing)
+                .monospacedDigit()
+                .frame(width: 52)
+                Text(unit)
                     .foregroundStyle(.secondary)
-                    .frame(width: 56, alignment: .trailing)
+                    .frame(width: 16, alignment: .leading)
             }
         }
     }
