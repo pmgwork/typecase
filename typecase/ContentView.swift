@@ -1426,6 +1426,7 @@ private struct FontInspector: View {
     @State private var missingCharacters: [String] = []
     @State private var variableAxes: VariableAxesState?
     @State private var metadata: FontNameTable.Metadata?
+    @State private var glyphBrowserFamily: FontFamily?
 
     /// The size of the inspector's specimen; also the point size the variable
     /// axis values are read at, so the sliders match what the specimen shows.
@@ -1493,6 +1494,14 @@ private struct FontInspector: View {
                         inspectorDetail("Styles", "\(family.faces.count)")
                     }
 
+                    Button {
+                        glyphBrowserFamily = family
+                    } label: {
+                        Label("Browse Glyphs", systemImage: "square.grid.3x3")
+                    }
+                    .disabled(family.previewFace == nil)
+                    .help("Show every character this font can display")
+
                     if let metadata {
                         metadataSection(metadata)
                     }
@@ -1543,6 +1552,9 @@ private struct FontInspector: View {
                 )
                 guard !Task.isCancelled else { return }
                 metadata = loaded
+            }
+            .sheet(item: $glyphBrowserFamily) { family in
+                GlyphBrowser(catalog: catalog, family: family)
             }
         } else if viewState.selection.count > 1 {
             ContentUnavailableView {

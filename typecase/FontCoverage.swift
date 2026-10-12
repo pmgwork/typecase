@@ -66,6 +66,25 @@ actor FontCoverage {
         return missing
     }
 
+    /// Every code point the face maps to a glyph, in ascending order. Only the
+    /// planes the character set reports members in are scanned, so a CJK font
+    /// costs two planes rather than the whole code space.
+    func coveredCodePoints(postScriptName: String, fileURL: URL?) -> [UInt32] {
+        let key = FaceKey(postScriptName: postScriptName, fileURL: fileURL?.standardizedFileURL)
+        guard let characterSet = characterSet(for: key) else { return [] }
+
+        var codePoints: [UInt32] = []
+        for plane in 0...16 where CFCharacterSetHasMemberInPlane(characterSet, CFIndex(plane)) {
+            if Task.isCancelled { return [] }
+            let base = UInt32(plane) << 16
+            for offset in UInt32(0)..<0x10000
+            where CFCharacterSetIsLongCharacterMember(characterSet, base | offset) {
+                codePoints.append(base | offset)
+            }
+        }
+        return codePoints
+    }
+
     /// Drops cached results for font files that were replaced or removed.
     func invalidate(urls: Set<URL>) {
         guard !urls.isEmpty else { return }

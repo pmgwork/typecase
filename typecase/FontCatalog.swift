@@ -1062,6 +1062,19 @@ final class FontCatalog: ObservableObject {
     }
 
     /// The preview face's variable axes, or nil for a static font.
+    /// The face's drawable characters grouped for the glyph browser. Reading
+    /// and grouping a CJK font's tens of thousands of code points stays off
+    /// the main actor.
+    func glyphInventory(for face: FontFace) async -> GlyphInventory {
+        let codePoints = await coverage.coveredCodePoints(
+            postScriptName: face.postScriptName,
+            fileURL: face.fileURL
+        )
+        return await Task.detached(priority: .userInitiated) {
+            GlyphInventory(codePoints: codePoints)
+        }.value
+    }
+
     func variableInfo(for family: FontFamily, size: CGFloat) async -> VariableFontInfo? {
         guard let face = family.previewFace else { return nil }
         return await Task.detached(priority: .userInitiated) {
