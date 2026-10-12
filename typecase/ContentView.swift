@@ -1581,7 +1581,8 @@ private struct FontInspector: View {
                     text: settings.effectiveMixedText(entered: viewState.previewText),
                     size: Self.previewSize,
                     lines: 2,
-                    fonts: fonts(for: pair)
+                    fonts: fonts(for: pair),
+                    japaneseLatinSpacing: pair.options.japaneseLatinSpacing
                 )
 
                 Group {
@@ -1614,7 +1615,8 @@ private struct FontInspector: View {
             result[entry.script] = PreviewFaceSpec(
                 postScriptName: entry.reference.postScriptName,
                 fileURL: catalog.face(for: entry.reference)?.fileURL,
-                variations: settings.variationValues(for: entry.reference.postScriptName)
+                variations: settings.variationValues(for: entry.reference.postScriptName),
+                features: pair.options.features
             )
         }
     }

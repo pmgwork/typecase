@@ -170,6 +170,7 @@ private struct PlaygroundResolvedBlock {
     let family: FontFamily?
     let face: FontFace?
     let variations: [UInt32: Double]?
+    let typesetting: TypesettingOptions
 
     init(block: PlaygroundBlock, catalog: FontCatalog, settings: AppSettings) {
         let family = block.familyID.flatMap { catalog.familyByID[$0] }
@@ -179,6 +180,7 @@ private struct PlaygroundResolvedBlock {
         self.family = family
         self.face = face
         self.variations = face.map { settings.variationValues(for: $0.postScriptName) }
+        self.typesetting = block.typesetting
 
         if block.text.isEmpty {
             var language = family?.previewLanguage ?? .latin
@@ -204,8 +206,15 @@ private struct PlaygroundResolvedBlock {
             postScriptName: face?.postScriptName,
             fileURL: face?.fileURL,
             size: size,
-            variations: variations
+            variations: variations,
+            features: typesetting.features
         )
+    }
+
+    /// The OpenType features the block's face carries.
+    var availableFeatures: [OpenTypeFeature] {
+        guard let face else { return [] }
+        return OpenTypeFeatureReader.features(for: [(face.postScriptName, face.fileURL)])
     }
 }
 
@@ -374,6 +383,8 @@ private struct PlaygroundBlockRow: View {
                 postScriptName: resolved.face?.postScriptName,
                 fileURL: resolved.face?.fileURL,
                 variations: resolved.variations,
+                features: block.typesetting.features,
+                japaneseLatinSpacing: block.typesetting.japaneseLatinSpacing,
                 size: CGFloat(block.size),
                 lineHeight: block.lineHeight,
                 tracking: block.tracking,
@@ -451,6 +462,8 @@ private struct PlaygroundBlockInspector: View {
                     }
                     Divider()
                     typographySection(block)
+                    Divider()
+                    featureSection(block, features: resolved.availableFeatures)
                 }
                 .padding(20)
             }
@@ -575,6 +588,15 @@ private struct PlaygroundBlockInspector: View {
                 fractionDigits: 1,
                 unit: "pt"
             )
+            slider(
+                "Japanese–Latin Space",
+                value: spacingPercentBinding(block),
+                range: 0...(TypesettingOptions.spacingRange.upperBound * 100),
+                step: 1,
+                fractionDigits: 0,
+                unit: "%"
+            )
+            .help("Space added between Japanese and Latin letters or figures, as a percentage of the font size (和欧間のアキ)")
             field("Alignment") {
                 Picker("Alignment", selection: alignmentBinding(block)) {
                     ForEach(PlaygroundAlignment.allCases) { alignment in
@@ -586,6 +608,24 @@ private struct PlaygroundBlockInspector: View {
                 .pickerStyle(.segmented)
                 .labelsHidden()
             }
+        }
+    }
+
+    /// The face's OpenType features as checkboxes, with a reset once any
+    /// differs from the font's default.
+    private func featureSection(_ block: PlaygroundBlock, features: [OpenTypeFeature]) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 8) {
+                Text("OpenType Features")
+                    .font(.headline)
+                Spacer(minLength: 8)
+                if block.typesetting.changedFeatureCount > 0 {
+                    Button("Reset") { update(block) { $0.typesetting.features = [:] } }
+                        .buttonStyle(.link)
+                        .help("Return every feature to the font's default")
+                }
+            }
+            OpenTypeFeatureList(features: features, options: typesettingBinding(block))
         }
     }
 
@@ -673,6 +713,21 @@ private struct PlaygroundBlockInspector: View {
         )
     }
 
+    private func typesettingBinding(_ block: PlaygroundBlock) -> Binding<TypesettingOptions> {
+        Binding(
+            get: { playground.block(id: block.id)?.typesetting ?? block.typesetting },
+            set: { newValue in update(block) { $0.typesetting = newValue } }
+        )
+    }
+
+    /// The Japanese–Latin space shown as a percentage of the em.
+    private func spacingPercentBinding(_ block: PlaygroundBlock) -> Binding<Double> {
+        Binding(
+            get: { (playground.block(id: block.id)?.typesetting ?? block.typesetting).japaneseLatinSpacing * 100 },
+            set: { newValue in update(block) { $0.typesetting.japaneseLatinSpacing = newValue / 100 } }
+        )
+    }
+
     private func alignmentBinding(_ block: PlaygroundBlock) -> Binding<PlaygroundAlignment> {
         Binding(
             get: { playground.block(id: block.id)?.alignment ?? block.alignment },
@@ -746,7 +801,10 @@ private struct PlaygroundPrintPage: View {
         VStack(alignment: .leading, spacing: 0) {
             ForEach(layout.blocks) { block in
                 let resolved = PlaygroundResolvedBlock(block: block, catalog: catalog, settings: settings)
-                Text(resolved.text.isEmpty ? " " : resolved.text)
+                Text(JapaneseLatinSpacing.attributed(
+                    resolved.text.isEmpty ? " " : resolved.text,
+                    spacing: block.typesetting.spacing(at: CGFloat(block.size))
+                ))
                     .font(resolved.font(size: CGFloat(block.size)))
                     .lineSpacing(CGFloat(block.size) * CGFloat(max(block.lineHeight - 1, 0)))
                     .tracking(CGFloat(block.tracking))

@@ -18,6 +18,8 @@ final class MixedPairDraft: ObservableObject {
     /// The window's own specimen size; `nil` follows the library's preview
     /// size, which this window never changes.
     @Published var previewSize: Double?
+    /// OpenType features and the Japanese–Latin space the pair is saved with.
+    @Published var typesetting = TypesettingOptions()
     @Published private(set) var savedPairSelectionID: FontFamily.ID?
     weak var originatingWindow: NSWindow?
 
@@ -26,6 +28,7 @@ final class MixedPairDraft: ObservableObject {
         selections = defaults
         previewText = ""
         previewSize = nil
+        typesetting = TypesettingOptions()
         originatingWindow = window
         savedPairSelectionID = nil
     }
@@ -116,15 +119,51 @@ struct MixedPairEditorView: View {
     /// divider never fights the content.
     private var scriptList: some View {
         let faces = draft.faces(in: catalog)
-        return VStack(alignment: .leading, spacing: 14) {
-            partGroup("Required", scripts: MixedScript.allCases.filter(\.isRequired), faces: faces)
-            Divider()
-            partGroup("Optional", scripts: MixedScript.allCases.filter { !$0.isRequired }, faces: faces)
-            // Push the rows to the top; without the spacer the stack centers
-            // itself in the sidebar column.
-            Spacer(minLength: 0)
+        return ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                partGroup("Required", scripts: MixedScript.allCases.filter(\.isRequired), faces: faces)
+                Divider()
+                partGroup("Optional", scripts: MixedScript.allCases.filter { !$0.isRequired }, faces: faces)
+                Divider()
+                typesettingGroup(faces: faces)
+            }
+            .padding(20)
+            .frame(maxWidth: .infinity, alignment: .topLeading)
         }
-        .padding(20)
+    }
+
+    /// The pair's Japanese–Latin space and the OpenType features of its fonts.
+    private func typesettingGroup(faces: [MixedScript: FontFace]) -> some View {
+        let available = OpenTypeFeatureReader.features(
+            for: MixedScript.allCases.compactMap { faces[$0] }.map { ($0.postScriptName, $0.fileURL) }
+        )
+        return VStack(alignment: .leading, spacing: 14) {
+            Text("Typesetting")
+                .font(.headline)
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Japanese–Latin Space")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                HStack(spacing: 8) {
+                    Slider(
+                        value: $draft.typesetting.japaneseLatinSpacing,
+                        in: TypesettingOptions.spacingRange,
+                        step: 0.01
+                    )
+                    .controlSize(.small)
+                    .labelsHidden()
+                    .accessibilityLabel("Japanese–Latin Space")
+                    Text("\(Int((draft.typesetting.japaneseLatinSpacing * 100).rounded())) %")
+                        .monospacedDigit()
+                        .foregroundStyle(.secondary)
+                        .frame(width: 40, alignment: .trailing)
+                }
+                .frame(width: MixedPairPopUp.width)
+                .help("Space added between Japanese and Latin letters or figures, as a percentage of the font size (和欧間のアキ)")
+            }
+            OpenTypeFeatureMenu(features: available, options: $draft.typesetting)
+                .fixedSize()
+        }
     }
 
     /// The parts a pair needs, or the ones that fall back when unset, under a
@@ -286,6 +325,7 @@ struct MixedPairEditorView: View {
                 placeholder: settings.effectiveMixedText(entered: ""),
                 size: previewSize,
                 fonts: fonts(for: faces),
+                japaneseLatinSpacing: draft.typesetting.japaneseLatinSpacing,
                 textColor: settings.previewTextColor
             )
         } else {
@@ -302,7 +342,8 @@ struct MixedPairEditorView: View {
             result[entry.key] = PreviewFaceSpec(
                 postScriptName: entry.value.postScriptName,
                 fileURL: entry.value.fileURL,
-                variations: settings.variationValues(for: entry.value)
+                variations: settings.variationValues(for: entry.value),
+                features: draft.typesetting.features
             )
         }
     }
@@ -331,7 +372,8 @@ struct MixedPairEditorView: View {
                 postScriptName: face.postScriptName
             )
         }
-        guard let pair = catalog.addMixedPair(references: references) else { return }
+        let typesetting = draft.typesetting == TypesettingOptions() ? nil : draft.typesetting
+        guard let pair = catalog.addMixedPair(references: references, typesetting: typesetting) else { return }
         draft.didSave(pair)
         dismiss()
     }

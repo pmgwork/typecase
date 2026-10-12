@@ -10,6 +10,8 @@ struct PlaygroundTextEditor: View {
     let postScriptName: String?
     let fileURL: URL?
     let variations: [UInt32: Double]?
+    let features: [String: Bool]
+    let japaneseLatinSpacing: Double
     let size: CGFloat
     let lineHeight: Double
     let tracking: Double
@@ -24,6 +26,8 @@ struct PlaygroundTextEditor: View {
             postScriptName: postScriptName,
             fileURL: fileURL,
             variations: variations,
+            features: features,
+            japaneseLatinSpacing: japaneseLatinSpacing,
             size: size,
             lineHeight: lineHeight,
             tracking: tracking,
@@ -35,12 +39,16 @@ struct PlaygroundTextEditor: View {
         // measured height; it just paints the sample under the empty editor.
         .background(alignment: .topLeading) {
             if text.isEmpty && !placeholder.isEmpty {
-                Text(placeholder)
+                Text(JapaneseLatinSpacing.attributed(
+                    placeholder,
+                    spacing: size * CGFloat(japaneseLatinSpacing)
+                ))
                     .font(FontResolver.shared.previewFont(
                         postScriptName: postScriptName,
                         fileURL: fileURL,
                         size: size,
-                        variations: variations
+                        variations: variations,
+                        features: features
                     ))
                     .lineSpacing(size * CGFloat(max(lineHeight - 1, 0)))
                     .tracking(tracking)
@@ -60,6 +68,8 @@ private struct PlaygroundTextView: NSViewRepresentable {
     let postScriptName: String?
     let fileURL: URL?
     let variations: [UInt32: Double]?
+    let features: [String: Bool]
+    let japaneseLatinSpacing: Double
     let size: CGFloat
     let lineHeight: Double
     let tracking: Double
@@ -71,6 +81,8 @@ private struct PlaygroundTextView: NSViewRepresentable {
         let postScriptName: String?
         let fileURL: URL?
         let variations: [UInt32: Double]?
+        let features: [String: Bool]
+        let japaneseLatinSpacing: Double
         let size: CGFloat
         let lineHeight: Double
         let tracking: Double
@@ -81,6 +93,7 @@ private struct PlaygroundTextView: NSViewRepresentable {
     private var appearance: Appearance {
         Appearance(
             postScriptName: postScriptName, fileURL: fileURL, variations: variations,
+            features: features, japaneseLatinSpacing: japaneseLatinSpacing,
             size: size, lineHeight: lineHeight, tracking: tracking,
             alignment: alignment, textColor: textColor
         )
@@ -144,6 +157,7 @@ private struct PlaygroundTextView: NSViewRepresentable {
         let font = resolvedFont
         let sample = text.isEmpty ? (placeholder.isEmpty ? " " : placeholder) : text
         let storage = NSTextStorage(string: sample, attributes: attributes(font: font))
+        applySpacing(to: storage)
         let layout = NSLayoutManager()
         let container = NSTextContainer(size: NSSize(width: width, height: CGFloat.greatestFiniteMagnitude))
         container.lineFragmentPadding = 0
@@ -158,7 +172,21 @@ private struct PlaygroundTextView: NSViewRepresentable {
     private var resolvedFont: NSFont {
         FontResolver.shared.nsFont(
             postScriptName: postScriptName, fileURL: fileURL,
-            size: size, variations: variations
+            size: size, variations: variations, features: features
+        )
+    }
+
+    /// Adds the Japanese–Latin space on top of the tracking every character
+    /// already carries.
+    fileprivate func applySpacing(
+        to storage: NSMutableAttributedString,
+        skipping marked: NSRange = NSRange(location: NSNotFound, length: 0)
+    ) {
+        JapaneseLatinSpacing.apply(
+            to: storage,
+            spacing: size * CGFloat(japaneseLatinSpacing),
+            baseKern: tracking,
+            skipping: marked
         )
     }
 
@@ -234,6 +262,15 @@ private struct PlaygroundTextView: NSViewRepresentable {
             guard !isApplying, let view = notification.object as? NSTextView else { return }
             MainActor.assumeIsolated {
                 if parent.text != view.string { parent.text = view.string }
+                // The space depends on the neighbors, so typing can add or
+                // remove it; recompute it once the input method commits.
+                guard parent.japaneseLatinSpacing != 0, !view.hasMarkedText(),
+                      let storage = view.textStorage, storage.length > 0 else { return }
+                isApplying = true
+                let full = NSRange(location: 0, length: storage.length)
+                storage.addAttribute(.kern, value: parent.tracking, range: full)
+                parent.applySpacing(to: storage)
+                isApplying = false
             }
         }
 
@@ -246,6 +283,7 @@ private struct PlaygroundTextView: NSViewRepresentable {
             view.typingAttributes = attributes
             if !view.hasMarkedText(), let storage = view.textStorage, storage.length > 0 {
                 storage.addAttributes(attributes, range: NSRange(location: 0, length: storage.length))
+                parent.applySpacing(to: storage)
             }
             lastAppearance = appearance
             isApplying = false

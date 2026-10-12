@@ -73,6 +73,7 @@ struct MixedPairRow: View, Equatable {
                 size: previewSize,
                 lines: 1,
                 fonts: fonts,
+                japaneseLatinSpacing: pair.options.japaneseLatinSpacing,
                 textColor: previewTextColor
             )
         }
@@ -113,7 +114,8 @@ struct MixedPairRow: View, Equatable {
             result[entry.script] = PreviewFaceSpec(
                 postScriptName: entry.reference.postScriptName,
                 fileURL: faces[entry.script]?.fileURL,
-                variations: variations[entry.reference.postScriptName]
+                variations: variations[entry.reference.postScriptName],
+                features: pair.options.features
             )
         }
     }

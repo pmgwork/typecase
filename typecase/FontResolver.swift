@@ -32,18 +32,20 @@ final class FontResolver {
     /// Resolves installed fonts by PostScript name and disabled local fonts
     /// directly from their files. Creating a CTFont from a file descriptor does
     /// not register or activate that font for the process. When `variations` is
-    /// set, the font is built as a variable instance with those axis values.
+    /// set, the font is built as a variable instance with those axis values;
+    /// `features` switches OpenType features on (`true`) or off (`false`) by tag.
     func previewFont(
         postScriptName: String?,
         fileURL: URL?,
         size: CGFloat,
-        variations: [UInt32: Double]? = nil
+        variations: [UInt32: Double]? = nil,
+        features: [String: Bool] = [:]
     ) -> Font {
         guard let postScriptName else { return .system(size: size) }
-        if let variations, !variations.isEmpty,
-           let base = baseDescriptor(postScriptName: postScriptName, fileURL: fileURL, size: size) {
-            let attributes = [kCTFontVariationAttribute: variationDictionary(variations)] as CFDictionary
-            let descriptor = CTFontDescriptorCreateCopyWithAttributes(base, attributes)
+        if let descriptor = customizedDescriptor(
+            postScriptName: postScriptName, fileURL: fileURL, size: size,
+            variations: variations, features: features
+        ) {
             return Font(CTFontCreateWithFontDescriptor(descriptor, size, nil))
         }
         if isAvailable(postScriptName) {
@@ -63,13 +65,14 @@ final class FontResolver {
         postScriptName: String?,
         fileURL: URL?,
         size: CGFloat,
-        variations: [UInt32: Double]? = nil
+        variations: [UInt32: Double]? = nil,
+        features: [String: Bool] = [:]
     ) -> NSFont {
         guard let postScriptName else { return NSFont.systemFont(ofSize: size) }
-        if let variations, !variations.isEmpty,
-           let base = baseDescriptor(postScriptName: postScriptName, fileURL: fileURL, size: size) {
-            let attributes = [kCTFontVariationAttribute: variationDictionary(variations)] as CFDictionary
-            let descriptor = CTFontDescriptorCreateCopyWithAttributes(base, attributes)
+        if let descriptor = customizedDescriptor(
+            postScriptName: postScriptName, fileURL: fileURL, size: size,
+            variations: variations, features: features
+        ) {
             return CTFontCreateWithFontDescriptor(descriptor, size, nil) as NSFont
         }
         if let installed = NSFont(name: postScriptName, size: size) {
@@ -133,6 +136,33 @@ final class FontResolver {
         }
         guard let fileURL else { return nil }
         return descriptor(postScriptName: postScriptName, fileURL: fileURL)
+    }
+
+    /// The face with axis values and feature settings applied, or nil when
+    /// neither is set and the plain face can be used.
+    private func customizedDescriptor(
+        postScriptName: String,
+        fileURL: URL?,
+        size: CGFloat,
+        variations: [UInt32: Double]?,
+        features: [String: Bool]
+    ) -> CTFontDescriptor? {
+        var attributes: [CFString: Any] = [:]
+        if let variations, !variations.isEmpty {
+            attributes[kCTFontVariationAttribute] = variationDictionary(variations)
+        }
+        if !features.isEmpty {
+            attributes[kCTFontFeatureSettingsAttribute] = features.keys.sorted().map { tag in
+                [
+                    kCTFontOpenTypeFeatureTag as String: tag,
+                    kCTFontOpenTypeFeatureValue as String: NSNumber(value: features[tag] == true ? 1 : 0),
+                ] as NSDictionary
+            } as NSArray
+        }
+        guard !attributes.isEmpty,
+              let base = baseDescriptor(postScriptName: postScriptName, fileURL: fileURL, size: size)
+        else { return nil }
+        return CTFontDescriptorCreateCopyWithAttributes(base, attributes as CFDictionary)
     }
 
     private func variationDictionary(_ variations: [UInt32: Double]) -> CFDictionary {

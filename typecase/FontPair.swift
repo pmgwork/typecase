@@ -31,20 +31,28 @@ nonisolated struct FontPair: Identifiable, Codable, Hashable, Sendable {
     var latin: FontFaceReference
     var numbers: FontFaceReference?
     var symbols: FontFaceReference?
+    /// OpenType features and the Japanese–Latin space. Optional so pairs saved
+    /// before it existed still decode; read it through `options`.
+    var typesetting: TypesettingOptions?
 
     init(
         id: UUID = UUID(),
         japanese: FontFaceReference,
         latin: FontFaceReference,
         numbers: FontFaceReference? = nil,
-        symbols: FontFaceReference? = nil
+        symbols: FontFaceReference? = nil,
+        typesetting: TypesettingOptions? = nil
     ) {
         self.id = id
         self.japanese = japanese
         self.latin = latin
         self.numbers = numbers
         self.symbols = symbols
+        self.typesetting = typesetting
     }
+
+    /// The pair's typesetting, with the defaults for older pairs.
+    var options: TypesettingOptions { typesetting ?? TypesettingOptions() }
 
     /// The face that draws one part of the mix, when the pair sets it.
     func reference(for script: MixedScript) -> FontFaceReference? {
@@ -121,6 +129,8 @@ nonisolated struct PreviewFaceSpec: Hashable, Sendable {
     let postScriptName: String
     let fileURL: URL?
     let variations: [UInt32: Double]?
+    /// OpenType feature overrides by tag; a face ignores tags it lacks.
+    var features: [String: Bool] = [:]
 }
 
 /// Splits preview text by script so each run can be drawn with its own font.

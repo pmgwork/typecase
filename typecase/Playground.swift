@@ -164,6 +164,8 @@ nonisolated struct PlaygroundBlock: Identifiable, Codable, Equatable, Sendable {
     /// Letter spacing in points; 0 keeps the font's own spacing.
     var tracking: Double
     var alignment: PlaygroundAlignment
+    /// OpenType feature overrides and the Japanese–Latin space.
+    var typesetting: TypesettingOptions
 
     init(
         id: UUID = UUID(),
@@ -174,7 +176,8 @@ nonisolated struct PlaygroundBlock: Identifiable, Codable, Equatable, Sendable {
         size: Double? = nil,
         lineHeight: Double? = nil,
         tracking: Double? = nil,
-        alignment: PlaygroundAlignment = .leading
+        alignment: PlaygroundAlignment = .leading,
+        typesetting: TypesettingOptions = TypesettingOptions()
     ) {
         self.id = id
         self.text = text
@@ -185,6 +188,7 @@ nonisolated struct PlaygroundBlock: Identifiable, Codable, Equatable, Sendable {
         self.lineHeight = lineHeight ?? role.lineHeight
         self.tracking = tracking ?? role.tracking
         self.alignment = alignment
+        self.typesetting = typesetting
     }
 
     mutating func applyRole(_ newRole: PlaygroundBlockRole) {
@@ -206,7 +210,7 @@ nonisolated struct PlaygroundBlock: Identifiable, Codable, Equatable, Sendable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, text, familyID, faceName, role, size, lineHeight, tracking, alignment
+        case id, text, familyID, faceName, role, size, lineHeight, tracking, alignment, typesetting
     }
 
     /// Decodes with per-field defaults and clamps the numbers into the ranges
@@ -233,6 +237,8 @@ nonisolated struct PlaygroundBlock: Identifiable, Codable, Equatable, Sendable {
         role = (try? container.decodeIfPresent(PlaygroundBlockRole.self, forKey: .role))
             ?? PlaygroundBlockRole.inferred(from: size)
         alignment = (try? container.decode(PlaygroundAlignment.self, forKey: .alignment)) ?? .leading
+        typesetting = (try? container.decodeIfPresent(TypesettingOptions.self, forKey: .typesetting))
+            ?? TypesettingOptions()
     }
 }
 
@@ -325,14 +331,15 @@ final class PlaygroundStore: ObservableObject {
 
     // MARK: - Blocks
 
-    /// Inserts a role below the current block and continues its font and
-    /// alignment. A new page starts with a paragraph if none is selected.
+    /// Inserts a role below the current block and continues its font,
+    /// alignment, and typesetting. A new page starts with a paragraph if none is selected.
     func addBlock(role: PlaygroundBlockRole = .paragraph) {
         var block = PlaygroundBlock(role: role)
         if let selected = selectedBlock {
             block.familyID = selected.familyID
             block.faceName = selected.faceName
             block.alignment = selected.alignment
+            block.typesetting = selected.typesetting
         }
         if let selectedBlockID,
            let index = currentLayout.blocks.firstIndex(where: { $0.id == selectedBlockID }) {
@@ -586,7 +593,7 @@ final class PlaygroundStore: ObservableObject {
             block.size == (size ?? role.size) &&
             block.lineHeight == (lineHeight ?? role.lineHeight) &&
             block.tracking == (tracking ?? role.tracking) &&
-            block.alignment == .leading
+            block.alignment == .leading && block.typesetting == TypesettingOptions()
     }
 
     private enum Key {
