@@ -1,4 +1,5 @@
 import AppKit
+import CoreText
 import Combine
 
 /// The shared, app-lifetime font library.
@@ -56,6 +57,12 @@ final class FontCatalog: ObservableObject {
     private var folderRecords: [FaceRecord] = []
     private var installedSeeds: [InstalledFaceSeed] = []
     private var scannedRoots: [URL] = []
+    /// The provider manifest names the cached records were classified with.
+    private var manifestNames: [String: Set<String>]?
+    private let snapshotStore = FontScanSnapshotStore()
+    private var snapshotSequence = 0
+    /// Whether the snapshot on disk matches the current scan results.
+    private var snapshotIsCurrent = false
     private var metadataCache: [URL: [String: FontNameTable.Metadata]] = [:]
     private var lastDirectoryFingerprint: UInt64 = 0
     private var securityScopedURLs: [URL] = []
@@ -86,7 +93,17 @@ final class FontCatalog: ObservableObject {
         hasStarted = true
         restoreFolders()
         startBackstopTimer()
-        refresh()
+        isLoading = true
+        // Show the last launch's library first; the scan then checks it against
+        // the fonts on disk and reparses only what changed.
+        Task { [weak self] in
+            let snapshot = await Task.detached(priority: .userInitiated) {
+                FontScanSnapshot.load()
+            }.value
+            guard let self else { return }
+            if let snapshot { await self.adopt(snapshot) }
+            self.refresh()
+        }
     }
 
     // MARK: - User data
@@ -654,6 +671,63 @@ final class FontCatalog: ObservableObject {
 
     // MARK: - Loading
 
+    /// Seeds the caches from the saved snapshot and publishes its library, unless
+    /// a scan has already started.
+    private func adopt(_ snapshot: FontScanSnapshot) async {
+        guard !hasLoadedOnce, refreshTask == nil else { return }
+        localizedNameCache = snapshot.localizedNameCache
+        fileCache = snapshot.files
+        installedSeeds = snapshot.installedSeeds
+        installedRecords = snapshot.installedRecords
+        scannedRoots = snapshot.roots
+        manifestNames = snapshot.manifestNames
+        snapshotIsCurrent = true
+        // Folder records are only valid for the folders they were scanned from;
+        // otherwise the scan publishes the library once it has the new folders.
+        guard snapshot.roots == folders else { return }
+
+        let activeNames = activeManagedNames
+        let deactivatedNames = deactivatedManagedNames
+        let overrides = categoryOverrides
+        let grouped = await Task.detached(priority: .userInitiated) {
+            Self.group(
+                installedRecords: snapshot.installedRecords,
+                folderRecords: snapshot.folderRecords,
+                activeNames: activeNames,
+                deactivatedNames: deactivatedNames,
+                categoryOverrides: overrides
+            )
+        }.value
+        guard !hasLoadedOnce, refreshTask == nil, overrides == categoryOverrides else { return }
+        folderRecords = snapshot.folderRecords
+        families = grouped
+        rebuildIndexes()
+        folderTrees = snapshot.folderTrees
+        hasLoadedOnce = true
+        dataRevision += 1
+        familiesRevision += 1
+    }
+
+    /// Saves the current scan results for the next launch, off the main actor.
+    private func saveSnapshot() {
+        snapshotSequence += 1
+        let sequence = snapshotSequence
+        let snapshot = FontScanSnapshot(
+            roots: scannedRoots,
+            manifestNames: manifestNames ?? [:],
+            installedSeeds: installedSeeds,
+            installedRecords: installedRecords,
+            folderRecords: folderRecords,
+            files: fileCache,
+            localizedNameCache: localizedNameCache,
+            folderTrees: folderTrees
+        )
+        let store = snapshotStore
+        Task.detached(priority: .utility) {
+            await store.save(snapshot, sequence: sequence)
+        }
+    }
+
     /// Requests a rescan. Requests that arrive while a scan is running are coalesced
     /// into a single follow-up scan.
     func refresh() {
@@ -676,7 +750,7 @@ final class FontCatalog: ObservableObject {
 
     private func performRefresh() async {
         let roots = folders
-        let seeds = installedFaceSeeds()
+        let seeds = await installedFaceSeeds()
         let output = await engine.scan(FontScanInput(
             roots: roots,
             installedSeeds: seeds,
@@ -684,6 +758,7 @@ final class FontCatalog: ObservableObject {
             previousInstalledRecords: installedRecords,
             previousFiles: fileCache,
             previousRoots: scannedRoots,
+            previousManifestNames: manifestNames,
             localizedNameCache: localizedNameCache
         ))
 
@@ -713,6 +788,7 @@ final class FontCatalog: ObservableObject {
         // The seeds of this scan are the baseline for the next one; without storing
         // them the installed set looks changed on every refresh.
         installedSeeds = seeds
+        manifestNames = output.manifestNames
         lastDirectoryFingerprint = output.directoryFingerprint
 
         if !output.changedFiles.isEmpty {
@@ -758,6 +834,10 @@ final class FontCatalog: ObservableObject {
                     self.dataRevision += 1
                 }
             }
+        }
+        if output.hasChanges || !snapshotIsCurrent {
+            saveSnapshot()
+            snapshotIsCurrent = true
         }
         isLoading = false
         folderMonitor.update(roots: folders)
@@ -1177,12 +1257,25 @@ final class FontCatalog: ObservableObject {
 
     // MARK: - Installed fonts
 
-    /// Enumerates installed faces with AppKit (main-actor only). The heavy
-    /// metadata extraction happens later on the scan engine.
-    private func installedFaceSeeds() -> [InstalledFaceSeed] {
+    /// Enumerates installed faces with AppKit. The heavy metadata extraction
+    /// happens later on the scan engine.
+    ///
+    /// `NSFontManager` is main-actor only and listing every family's members
+    /// takes a few hundred milliseconds, so the work yields to the run loop
+    /// every few milliseconds instead of freezing the window. The family names
+    /// come from Core Text, which lists the same families off the main actor.
+    private func installedFaceSeeds() async -> [InstalledFaceSeed] {
+        let familyNames = await Task.detached(priority: .userInitiated) {
+            CTFontManagerCopyAvailableFontFamilyNames() as? [String] ?? []
+        }.value
         var seeds: [InstalledFaceSeed] = []
         let manager = NSFontManager.shared
-        for family in manager.availableFontFamilies {
+        var sliceStart = CFAbsoluteTimeGetCurrent()
+        for family in familyNames {
+            if CFAbsoluteTimeGetCurrent() - sliceStart > Self.seedSliceDuration {
+                await Task.yield()
+                sliceStart = CFAbsoluteTimeGetCurrent()
+            }
             guard let members = manager.availableMembers(ofFontFamily: family) else { continue }
             for member in members {
                 guard member.count >= 4,
@@ -1200,6 +1293,10 @@ final class FontCatalog: ObservableObject {
         return seeds
     }
 
+    /// How long the installed-font listing may hold the main actor at a time:
+    /// half a frame, so scrolling and typing stay smooth while it runs.
+    private static let seedSliceDuration: CFAbsoluteTime = 0.008
+
     nonisolated private static func group(_ records: [FaceRecord], categoryOverrides: [String: FontCategory]) -> [FontFamily] {
         Dictionary(grouping: records, by: {
             familyID(for: $0.family)
@@ -1213,9 +1310,13 @@ final class FontCatalog: ObservableObject {
                     facesByName[record.face.postScriptName] = record.face
                 }
             }
+            // The PostScript name settles faces with the same weight and style
+            // name (e.g. a static and a variable file), so the order does not
+            // depend on dictionary iteration.
             let deduplicated = facesByName.values.sorted {
-                if $0.weight == $1.weight { return $0.styleName < $1.styleName }
-                return $0.weight < $1.weight
+                if $0.weight != $1.weight { return $0.weight < $1.weight }
+                if $0.styleName != $1.styleName { return $0.styleName < $1.styleName }
+                return $0.postScriptName < $1.postScriptName
             }
             let source: FontSource
             if let provider = records.compactMap(\.source.provider).min(by: { $0.order < $1.order }) {

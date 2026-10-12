@@ -6,7 +6,7 @@ import Foundation
 /// texts and the dictionaries the scanner builds, so they stay stable across
 /// releases. Latin is the fallback for every other script and never appears in
 /// a font's detected language set.
-nonisolated enum FontLanguage: String, CaseIterable, Hashable, Identifiable, Sendable {
+nonisolated enum FontLanguage: String, CaseIterable, Hashable, Identifiable, Codable, Sendable {
     case japanese
     case simplifiedChinese
     case traditionalChinese

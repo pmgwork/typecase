@@ -56,7 +56,7 @@ nonisolated enum FontNameTable {
     }
 
     /// A family's localized names and design languages, as read from one file.
-    struct LocalizedFamily: Sendable {
+    struct LocalizedFamily: Codable, Sendable {
         var names: [FontLanguage: String] = [:]
         /// The scripts the font is designed for, from the `meta` table's
         /// `dlng` records. Empty when the file carries no `meta` table.

@@ -5,7 +5,7 @@ import Foundation
 ///
 /// The `installed` flag on the face is a placeholder: the catalog recomputes it
 /// from the current activation state when records are applied.
-nonisolated struct FaceRecord: Sendable {
+nonisolated struct FaceRecord: Codable, Sendable {
     let family: String
     /// The localized family names the face's file provides for the languages
     /// the face declares, by language.
@@ -38,14 +38,14 @@ nonisolated struct FaceRecord: Sendable {
 }
 
 /// A lightweight description of an installed face, produced on the main actor by `NSFontManager`.
-nonisolated struct InstalledFaceSeed: Hashable, Sendable {
+nonisolated struct InstalledFaceSeed: Hashable, Codable, Sendable {
     let family: String
     let postScriptName: String
     let styleName: String
     let weight: Int
 }
 
-nonisolated struct FontFileStamp: Hashable, Sendable {
+nonisolated struct FontFileStamp: Hashable, Codable, Sendable {
     let modification: TimeInterval
     /// When the file was created, which is when a font was added to a folder.
     /// `0` when the file system does not report it.
@@ -53,7 +53,7 @@ nonisolated struct FontFileStamp: Hashable, Sendable {
     let size: Int64
 }
 
-nonisolated struct CachedFontFile: Sendable {
+nonisolated struct CachedFontFile: Codable, Sendable {
     let stamp: FontFileStamp
     let descriptorNames: Set<String>
     let records: [FaceRecord]
@@ -66,6 +66,9 @@ nonisolated struct FontScanInput: Sendable {
     let previousInstalledRecords: [FaceRecord]
     let previousFiles: [URL: CachedFontFile]
     let previousRoots: [URL]
+    /// The provider manifest names the previous records were classified with;
+    /// nil when there are no previous records.
+    let previousManifestNames: [String: Set<String>]?
     let localizedNameCache: [URL: [String: FontNameTable.LocalizedFamily]]
 }
 
@@ -78,6 +81,8 @@ nonisolated struct FontScanOutput: Sendable {
     let changedFiles: [URL]
     let folderTrees: [FontFolderNode]
     let directoryFingerprint: UInt64
+    /// The provider manifest names this scan classified sources with.
+    let manifestNames: [String: Set<String>]
     let hasChanges: Bool
 }
 
@@ -85,7 +90,8 @@ nonisolated struct FontScanOutput: Sendable {
 ///
 /// The engine keeps no state between scans. Callers pass in the previous file
 /// cache and receive an updated one, so unchanged files are never re-parsed and
-/// a scan never blocks the UI.
+/// a scan never blocks the UI. Files and installed faces that do need parsing
+/// are parsed on every core.
 actor FontScanEngine {
     private static let fontExtensions: Set<String> = ["otf", "ttf", "ttc", "dfont"]
 
@@ -158,7 +164,10 @@ actor FontScanEngine {
             filesByRoot[root] = rawFiles
         }
 
-        var files = input.previousFiles
+        // A record's source depends on the provider manifests, so a changed
+        // manifest reparses every file instead of reusing stale sources.
+        let manifestsChanged = input.previousManifestNames.map { $0 != manifestNames } ?? false
+        var files = manifestsChanged ? [:] : input.previousFiles
         var changed: [URL] = []
         var removed: [URL] = []
         let currentURLs = Set(currentStamps.keys)
@@ -178,31 +187,58 @@ actor FontScanEngine {
             nameCache.removeValue(forKey: url)
             files.removeValue(forKey: url)
         }
-        for url in changed {
-            guard let stamp = currentStamps[url] else { continue }
-            files[url] = parseFontFile(url, stamp: stamp, manifestNames: manifestNames, nameCache: &nameCache)
+        // Each file reads only its own name table, so files parse independently.
+        let stamps = currentStamps
+        let parsedFiles = Self.concurrentMap(changed) { url in
+            var fileNames: [URL: [String: FontNameTable.LocalizedFamily]] = [:]
+            let file = Self.parseFontFile(
+                url,
+                stamp: stamps[url] ?? FontFileStamp(modification: 0, creation: 0, size: 0),
+                manifestNames: manifestNames,
+                nameCache: &fileNames
+            )
+            return (file: file, names: fileNames[url])
+        }
+        for (url, parsed) in zip(changed, parsedFiles) {
+            files[url] = parsed.file
+            if let names = parsed.names { nameCache[url] = names }
         }
 
         let installedChanged = input.previousInstalledSeeds != input.installedSeeds
         let rootsChanged = input.previousRoots != input.roots
-        let hasChanges = installedChanged || rootsChanged || !changed.isEmpty || !removed.isEmpty
+        let hasChanges = installedChanged || rootsChanged || manifestsChanged
+            || !changed.isEmpty || !removed.isEmpty
 
         // Installed metadata is reparsed when the installed set changes or when a file changed,
         // because a file's faces can also appear in the installed font list.
         let installedRecords: [FaceRecord]
-        if installedChanged || !changed.isEmpty || !removed.isEmpty {
-            installedRecords = input.installedSeeds.compactMap { seed in
-                let descriptor = CTFontDescriptorCreateWithNameAndSize(seed.postScriptName as CFString, 0)
-                return makeRecord(
-                    descriptor: descriptor,
-                    fallbackURL: nil,
-                    fallbackFamily: seed.family,
-                    fallbackStyle: seed.styleName,
-                    fallbackWeight: seed.weight,
-                    managed: false,
-                    manifestNames: manifestNames,
-                    nameCache: &nameCache
-                )
+        if installedChanged || manifestsChanged || !changed.isEmpty || !removed.isEmpty {
+            // Neighboring seeds usually share a font file, so each chunk keeps
+            // its own name cache and reads a shared file's name table once.
+            let seeds = input.installedSeeds
+            let chunks = stride(from: 0, to: seeds.count, by: Self.installedChunkSize).map {
+                seeds[$0..<min($0 + Self.installedChunkSize, seeds.count)]
+            }
+            let knownNames = nameCache
+            let parsedChunks = Self.concurrentMap(chunks) { chunk in
+                var chunkNames = knownNames
+                let records = chunk.compactMap { seed in
+                    Self.makeRecord(
+                        descriptor: CTFontDescriptorCreateWithNameAndSize(seed.postScriptName as CFString, 0),
+                        fallbackURL: nil,
+                        fallbackFamily: seed.family,
+                        fallbackStyle: seed.styleName,
+                        fallbackWeight: seed.weight,
+                        managed: false,
+                        manifestNames: manifestNames,
+                        nameCache: &chunkNames
+                    )
+                }
+                return (records: records, names: chunkNames)
+            }
+            installedRecords = parsedChunks.flatMap(\.records)
+            for parsed in parsedChunks {
+                nameCache.merge(parsed.names) { current, _ in current }
             }
         } else {
             installedRecords = input.previousInstalledRecords
@@ -229,6 +265,7 @@ actor FontScanEngine {
             changedFiles: changed,
             folderTrees: folderTrees,
             directoryFingerprint: Self.fingerprint(directoryDates),
+            manifestNames: manifestNames,
             hasChanges: hasChanges
         )
     }
@@ -276,7 +313,27 @@ actor FontScanEngine {
 
     // MARK: - Parsing
 
-    private func parseFontFile(
+    /// Installed faces parsed per task. Large enough to amortize a chunk's
+    /// name cache, small enough to spread the work across every core.
+    private static let installedChunkSize = 64
+
+    /// Maps the elements on every core, keeping their order.
+    nonisolated private static func concurrentMap<Element, Result>(
+        _ elements: [Element],
+        _ transform: (Element) -> Result
+    ) -> [Result] {
+        guard elements.count > 1 else { return elements.map(transform) }
+        var results = [Result?](repeating: nil, count: elements.count)
+        results.withUnsafeMutableBufferPointer { slots in
+            // Each iteration writes only its own slot.
+            DispatchQueue.concurrentPerform(iterations: elements.count) { index in
+                slots[index] = transform(elements[index])
+            }
+        }
+        return results.map { $0! }
+    }
+
+    nonisolated private static func parseFontFile(
         _ url: URL,
         stamp: FontFileStamp,
         manifestNames: [String: Set<String>],
@@ -303,7 +360,7 @@ actor FontScanEngine {
         return CachedFontFile(stamp: stamp, descriptorNames: names, records: records)
     }
 
-    private func makeRecord(
+    nonisolated private static func makeRecord(
         descriptor: CTFontDescriptor,
         fallbackURL: URL? = nil,
         fallbackFamily: String? = nil,
@@ -363,7 +420,7 @@ actor FontScanEngine {
 
     /// The localized family names and design languages the face's file carries
     /// for the requested family name.
-    private func localizedFamily(
+    nonisolated private static func localizedFamily(
         for url: URL?,
         family: String,
         nameCache: inout [URL: [String: FontNameTable.LocalizedFamily]]
@@ -379,11 +436,11 @@ actor FontScanEngine {
         return mapping[family.lowercased()]
     }
 
-    private func attribute(_ descriptor: CTFontDescriptor, key: CFString) -> String? {
+    nonisolated private static func attribute(_ descriptor: CTFontDescriptor, key: CFString) -> String? {
         CTFontDescriptorCopyAttribute(descriptor, key) as? String
     }
 
-    private func fontSource(
+    nonisolated private static func fontSource(
         url: URL?,
         manufacturer: String,
         managed: Bool,
@@ -400,7 +457,7 @@ actor FontScanEngine {
         return managed ? .local : .system
     }
 
-    private func classify(family: String, style: String, symbolicTraits: UInt32) -> FontCategory {
+    nonisolated private static func classify(family: String, style: String, symbolicTraits: UInt32) -> FontCategory {
         let searchable = "\(family) \(style)".lowercased()
         if symbolicTraits & CTFontSymbolicTraits.traitMonoSpace.rawValue != 0 || searchable.contains("mono") {
             return .monospaced

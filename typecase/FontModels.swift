@@ -58,7 +58,7 @@ nonisolated enum FontCategory: String, Codable, CaseIterable, Identifiable, Send
     }
 }
 
-nonisolated struct FontFace: Identifiable, Hashable, Sendable {
+nonisolated struct FontFace: Identifiable, Hashable, Codable, Sendable {
     let postScriptName: String
     let styleName: String
     /// Core Text weight scaled to an integer so style lists sort light to heavy.
@@ -197,7 +197,7 @@ nonisolated struct FontFamily: Identifiable, Hashable, Sendable {
     }
 }
 
-nonisolated struct FontFolderNode: Identifiable, Hashable, Sendable {
+nonisolated struct FontFolderNode: Identifiable, Hashable, Codable, Sendable {
     let url: URL
     let children: [FontFolderNode]?
 
