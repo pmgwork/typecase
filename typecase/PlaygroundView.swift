@@ -26,7 +26,7 @@ struct PlaygroundView: View {
         PlaygroundCanvas()
             .inspector(isPresented: $inspectorVisible) {
                 PlaygroundBlockInspector()
-                    .inspectorColumnWidth(min: 260, ideal: 320, max: 420)
+                    .inspectorColumnWidth(min: 280, ideal: 320, max: 400)
             }
             .frame(minWidth: 720, minHeight: 480)
             .navigationTitle(playground.currentLayout.name)
@@ -261,12 +261,13 @@ private struct PlaygroundCanvas: View {
         .listStyle(.inset)
         .scrollContentBackground(.hidden)
         .background(paperColor)
-        .onDeleteCommand {
-            // When a block or inspector text view owns the keyboard, Delete
-            // edits its text rather than deleting the entire block.
-            guard !(NSApp.keyWindow?.firstResponder is NSTextView) else { return }
-            if let id = playground.selectedBlockID {
+        // The canvas list has no selection of its own, so it never receives
+        // the Delete command; watch the window's key presses instead.
+        .background {
+            DeleteKeyMonitor {
+                guard let id = playground.selectedBlockID else { return false }
                 playground.removeBlock(id)
+                return true
             }
         }
         .overlay {
@@ -294,6 +295,61 @@ private struct PlaygroundCanvas: View {
 
     private var textColor: Color {
         settings.previewTextColor ?? Color(nsColor: .labelColor)
+    }
+}
+
+/// Calls `onDelete` for Delete and Forward Delete pressed in this view's
+/// window while no text view is editing; a text view owning the keyboard keeps
+/// the key for its text. `onDelete` returns whether it consumed the key.
+private struct DeleteKeyMonitor: NSViewRepresentable {
+    let onDelete: () -> Bool
+
+    func makeNSView(context: Context) -> MonitorView {
+        let view = MonitorView()
+        view.onDelete = onDelete
+        return view
+    }
+
+    func updateNSView(_ view: MonitorView, context: Context) {
+        view.onDelete = onDelete
+    }
+
+    static func dismantleNSView(_ view: MonitorView, coordinator: ()) {
+        view.stopMonitoring()
+    }
+
+    final class MonitorView: NSView {
+        var onDelete: (() -> Bool)?
+        private var monitor: Any?
+
+        /// Delete (51) and Forward Delete (117).
+        private static let deleteKeyCodes: Set<UInt16> = [51, 117]
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            stopMonitoring()
+            guard window != nil else { return }
+            monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+                // Pass only Sendable values into the main-actor check.
+                let windowNumber = event.windowNumber
+                let isPlainDelete = Self.deleteKeyCodes.contains(event.keyCode)
+                    && event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+                        .subtracting([.function, .numericPad]).isEmpty
+                guard isPlainDelete else { return event }
+                let consumed = MainActor.assumeIsolated { () -> Bool in
+                    guard let self, let window = self.window,
+                          window.windowNumber == windowNumber,
+                          !(window.firstResponder is NSText) else { return false }
+                    return self.onDelete?() == true
+                }
+                return consumed ? nil : event
+            }
+        }
+
+        func stopMonitoring() {
+            if let monitor { NSEvent.removeMonitor(monitor) }
+            monitor = nil
+        }
     }
 }
 
@@ -332,7 +388,7 @@ private struct PlaygroundBlockRow: View {
         .padding(.vertical, 4)
         .padding(.horizontal, 12)
         .contentShape(.rect)
-        .help("\(block.role.title) · \(helpText) · Click to edit text")
+        .help("\(block.role.title) · \(helpText) · Click to edit text; press Esc, then Delete, to remove the block")
     }
 
     private var textBinding: Binding<String> {

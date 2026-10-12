@@ -88,8 +88,16 @@ private struct SpecimenColorPopover: View {
         .gesture(selectionGesture)
         .focusable()
         .focused($pickerFocused)
-        .onKeyPress(.leftArrow) { adjustHue(-0.01); return .handled }
-        .onKeyPress(.rightArrow) { adjustHue(0.01); return .handled }
+        // ← → turn the hue ring; with Shift they move across the field's
+        // saturation axis. ↑ ↓ move along its brightness axis.
+        .onKeyPress(.leftArrow, phases: [.down, .repeat]) { press in
+            press.modifiers.contains(.shift) ? adjustSaturation(-0.02) : adjustHue(-0.01)
+            return .handled
+        }
+        .onKeyPress(.rightArrow, phases: [.down, .repeat]) { press in
+            press.modifiers.contains(.shift) ? adjustSaturation(0.02) : adjustHue(0.01)
+            return .handled
+        }
         .onKeyPress(.upArrow) { brightness = min(1, brightness + 0.02); publish(); return .handled }
         .onKeyPress(.downArrow) { brightness = max(0, brightness - 0.02); publish(); return .handled }
         .accessibilityRepresentation {
@@ -99,7 +107,7 @@ private struct SpecimenColorPopover: View {
                 Slider(value: componentBinding($brightness), in: 0...1) { Text("Brightness") }
             }
         }
-        .help("Choose a color. Arrow keys adjust hue and brightness.")
+        .help("Choose a color. Arrow keys adjust hue and brightness; Shift-arrow keys adjust saturation.")
     }
 
     /// The hue wheel as a ring: the angular gradient starts at 3 o'clock and
@@ -227,6 +235,11 @@ private struct SpecimenColorPopover: View {
 
     private func adjustHue(_ delta: Double) {
         hue = (hue + delta + 1).truncatingRemainder(dividingBy: 1)
+        publish()
+    }
+
+    private func adjustSaturation(_ delta: Double) {
+        saturation = min(max(saturation + delta, 0), 1)
         publish()
     }
 

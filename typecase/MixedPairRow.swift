@@ -67,9 +67,11 @@ struct MixedPairRow: View, Equatable {
                         .help("One of the fonts is no longer in the library")
                 }
             }
+            // Single-line like the font rows, so row heights stay constant.
             MixedFontPreview(
                 text: previewText,
                 size: previewSize,
+                lines: 1,
                 fonts: fonts,
                 textColor: previewTextColor
             )

@@ -16,21 +16,25 @@ struct ContentView: View {
     var body: some View {
         NavigationSplitView(columnVisibility: $columnVisibility) {
             Sidebar(catalog: catalog, viewState: viewState)
-                .navigationSplitViewColumnWidth(min: 180, ideal: 210, max: 260)
+                .navigationSplitViewColumnWidth(min: 190, ideal: 210, max: 260)
         } detail: {
+            // The inspector belongs to the detail column. Attached to the whole
+            // split view, it shifts the sidebar's rows and section headers past
+            // the leading edge, clipping the disclosure arrows.
             FontLibraryView(catalog: catalog, viewState: viewState)
+                .inspector(isPresented: $inspectorVisible) {
+                    FontInspector(catalog: catalog, viewState: viewState, comparisonVisible: $comparisonVisible)
+                        .inspectorColumnWidth(min: 280, ideal: 320, max: 400)
+                }
         }
         .navigationTitle("TypeCase")
         // Preserve the principal region so trailing controls stay right-aligned.
         .toolbarTitleDisplayMode(.inline)
         .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
-        .inspector(isPresented: $inspectorVisible) {
-            FontInspector(catalog: catalog, viewState: viewState, comparisonVisible: $comparisonVisible)
-                .inspectorColumnWidth(min: 260, ideal: 320, max: 400)
-        }
         // Keep the window's minimum size independent of sidebar and inspector visibility.
         // Otherwise AppKit changes the window frame when a split-view column is restored.
-        .frame(minWidth: 860, minHeight: 520)
+        // The width fits every column at its minimum: 190 + 480 + 280.
+        .frame(minWidth: 950, minHeight: 520)
         .toolbar {
             ToolbarItem(placement: .principal) {
                 Color.clear.frame(width: 1, height: 1)
@@ -126,9 +130,11 @@ struct ContentView: View {
             )
         }
         .onReceive(NotificationCenter.default.publisher(for: .addFontFolder)) { _ in
-            // The File menu command is not tied to a window; only the key window navigates
-            // to the newly added folder.
-            guard window?.isKeyWindow == true else { return }
+            // The File menu command is not tied to a window; only the frontmost
+            // library window navigates to the newly added folder, even while the
+            // PlayGround or another window is key.
+            guard let window, window === LibraryWindows.frontmost else { return }
+            window.makeKeyAndOrderFront(nil)
             catalog.addFolder { url in viewState.librarySelection = .folder(url) }
         }
         .task {
@@ -137,12 +143,13 @@ struct ContentView: View {
         }
         .background(WindowAccessor {
             window = $0
+            if let window = $0 { LibraryWindows.register(window) }
         })
         .onChange(of: catalog.familiesRevision) { _, _ in
             viewState.reconcile(with: catalog)
         }
         .onChange(of: catalog.dataRevision) { _, _ in
-            // A tag can disappear when it is removed from its last font.
+            // Renaming or deleting a tag removes the destination the sidebar shows.
             viewState.reconcileDestination(with: catalog)
         }
         .onChange(of: viewState.librarySelection) { _, selection in
@@ -158,8 +165,10 @@ struct ContentView: View {
             viewState.librarySelection = .section(.mixed)
             viewState.selection = [id]
         }
+        // Every library window observes the catalog; only the frontmost one
+        // presents its error, so the alert appears once.
         .alert("TypeCase", isPresented: Binding(
-            get: { catalog.errorMessage != nil },
+            get: { catalog.errorMessage != nil && window != nil && window === LibraryWindows.frontmost },
             set: { if !$0 { catalog.errorMessage = nil } }
         )) {
             Button("OK") { catalog.errorMessage = nil }
@@ -184,6 +193,10 @@ private struct ToolbarSearchField: NSViewRepresentable {
         field.placeholderString = "Search"
         field.delegate = context.coordinator
         field.sendsSearchStringImmediately = true
+        // The clear button and Esc change the text without a text-change
+        // notification; they only send the action.
+        field.target = context.coordinator
+        field.action = #selector(Coordinator.searchChanged(_:))
         return field
     }
 
@@ -204,6 +217,12 @@ private struct ToolbarSearchField: NSViewRepresentable {
         func controlTextDidChange(_ notification: Notification) {
             guard let field = notification.object as? NSSearchField else { return }
             text.wrappedValue = field.stringValue
+        }
+
+        @objc func searchChanged(_ field: NSSearchField) {
+            if text.wrappedValue != field.stringValue {
+                text.wrappedValue = field.stringValue
+            }
         }
     }
 }
@@ -742,7 +761,7 @@ private struct FontLibraryView: View {
         .onChange(of: catalog.isLoading) { _, _ in
             reconcileSelection()
         }
-        .navigationSplitViewColumnWidth(min: 320, ideal: 640)
+        .navigationSplitViewColumnWidth(min: 480, ideal: 640)
     }
 
     /// The Mixed Fonts destination lists saved Japanese + Latin combinations
@@ -836,10 +855,16 @@ private struct FontLibraryView: View {
                     mixedPairRow(pair)
                         .equatable()
                         .tag(pair.selectionID)
-                        .contextMenu {
-                            Button("Delete", role: .destructive) { deleteMixedPair(pair) }
-                        }
                 }
+            }
+            // Like the font list, the menu belongs to the List so secondary-click
+            // does not outline the row.
+            .contextMenu(forSelectionType: FontFamily.ID.self) { ids in
+                let targets = pairs.filter { ids.contains($0.selectionID) }
+                Button(targets.count > 1 ? "Delete \(targets.count) Pairs" : "Delete", role: .destructive) {
+                    targets.forEach(deleteMixedPair)
+                }
+                .disabled(targets.isEmpty)
             }
             .scrollContentBackground(.hidden)
             .listStyle(.inset)
@@ -1114,6 +1139,18 @@ private struct FontLibraryView: View {
     }
 }
 
+private extension View {
+    /// Double-clicking a row's text or specimen toggles its styles. The row's
+    /// buttons stay outside it, so double-clicking the star or an activation
+    /// button only toggles that button.
+    func togglesOnDoubleClick(_ action: @escaping () -> Void) -> some View {
+        contentShape(.rect)
+            // Let the List select on the first click without waiting for the
+            // double-click recognizer to fail.
+            .simultaneousGesture(TapGesture(count: 2).onEnded { action() })
+    }
+}
+
 /// The tint of the list-row activation indicators. System green marks fonts
 /// that TypeCase manages, including the lock for sources it cannot change;
 /// an inactive style keeps a secondary-gray outline.
@@ -1151,20 +1188,23 @@ private struct FontFamilyRow: View, Equatable {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
                 activationIndicator
-                Text(family.name)
-                    .font(.body.weight(.medium))
-                    .lineLimit(1)
-                Text("\(family.faces.count) \(family.faces.count == 1 ? "style" : "styles")")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                if family.source != .system {
-                    Text(family.source.shortTitle)
+                HStack(spacing: 8) {
+                    Text(family.name)
+                        .font(.body.weight(.medium))
+                        .lineLimit(1)
+                    Text("\(family.faces.count) \(family.faces.count == 1 ? "style" : "styles")")
                         .font(.callout)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
+                    if family.source != .system {
+                        Text(family.source.shortTitle)
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                    Spacer(minLength: 8)
                 }
-                Spacer(minLength: 8)
+                .togglesOnDoubleClick(toggleExpanded)
                 Button {
                     toggleFavorite()
                 } label: {
@@ -1195,6 +1235,8 @@ private struct FontFamilyRow: View, Equatable {
                                 Text(face.styleName)
                                     .font(.callout)
                                     .foregroundStyle(.secondary)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .togglesOnDoubleClick(toggleExpanded)
                             }
                             FontPreviewText(
                                 text: previewText,
@@ -1204,6 +1246,8 @@ private struct FontFamilyRow: View, Equatable {
                                 variations: variations[face.id],
                                 textColor: previewTextColor
                             )
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .togglesOnDoubleClick(toggleExpanded)
                         }
                     }
                 }
@@ -1216,6 +1260,8 @@ private struct FontFamilyRow: View, Equatable {
                     variations: family.previewFace.flatMap { variations[$0.id] },
                     textColor: previewTextColor
                 )
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .togglesOnDoubleClick(toggleExpanded)
             }
         }
         .padding(.horizontal, 12)
@@ -1232,11 +1278,6 @@ private struct FontFamilyRow: View, Equatable {
             hidesSelectionHighlight: selectionTint != nil
         ))
         .contentShape(.rect)
-        // Let the List select on the first click without waiting for the
-        // double-click recognizer to fail.
-        .simultaneousGesture(
-            TapGesture(count: 2).onEnded { toggleExpanded() }
-        )
         .help(isExpanded ? "Double-click to hide styles" : "Double-click to show styles")
     }
 
@@ -1848,6 +1889,23 @@ private struct ComparisonView: View {
         .environmentObject(MixedPairDraft())
 }
 
+/// The open library windows, so app-wide commands and alerts reach exactly one
+/// of them even while another window (PlayGround, Settings) is key.
+@MainActor
+enum LibraryWindows {
+    static let id = "library"
+    private static let windows = NSHashTable<NSWindow>.weakObjects()
+
+    static func register(_ window: NSWindow) {
+        windows.add(window)
+    }
+
+    /// The library window nearest the front, or nil when none is open.
+    static var frontmost: NSWindow? {
+        NSApp.orderedWindows.first { windows.contains($0) && $0.isVisible }
+    }
+}
+
 /// Reports the hosting `NSWindow` so menu commands can be routed to the key window.
 private struct WindowAccessor: NSViewRepresentable {
     let onWindow: (NSWindow?) -> Void
@@ -2023,6 +2081,12 @@ private struct PreviewTextEditor: View {
                 .fill(Color(nsColor: .windowBackgroundColor).opacity(0.75))
         }
         .glassEffect(.regular, in: .rect(cornerRadius: 14))
+        // Each library window has its own editor; follow presets saved by the
+        // others.
+        .onReceive(NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification)) { _ in
+            let stored = Self.loadCustomPresets()
+            if stored != customPresets { customPresets = stored }
+        }
     }
 
     private var trimmedPreviewText: String {

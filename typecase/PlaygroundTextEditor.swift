@@ -221,6 +221,15 @@ private struct PlaygroundTextView: NSViewRepresentable {
             parent.onBeginEditing()
         }
 
+        /// Esc ends editing, so the window's Delete key removes the selected
+        /// block instead of editing its text.
+        func textView(_ textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+            guard commandSelector == #selector(NSResponder.cancelOperation(_:)),
+                  !textView.hasMarkedText() else { return false }
+            textView.window?.makeFirstResponder(nil)
+            return true
+        }
+
         func textDidChange(_ notification: Notification) {
             guard !isApplying, let view = notification.object as? NSTextView else { return }
             MainActor.assumeIsolated {

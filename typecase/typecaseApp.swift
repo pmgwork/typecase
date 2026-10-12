@@ -15,7 +15,7 @@ struct typecaseApp: App {
     @StateObject private var mixedPairDraft = MixedPairDraft()
 
     var body: some Scene {
-        WindowGroup {
+        WindowGroup(id: LibraryWindows.id) {
             ContentView()
                 .environmentObject(catalog)
                 .environmentObject(settings)
@@ -27,10 +27,7 @@ struct typecaseApp: App {
         .windowResizability(.contentMinSize)
         .commands {
             CommandGroup(after: .newItem) {
-                Button("Add Font Folder…") {
-                    NotificationCenter.default.post(name: .addFontFolder, object: nil)
-                }
-                .keyboardShortcut("o", modifiers: [.command, .shift])
+                AddFontFolderCommand(catalog: catalog, settings: settings)
 
                 OpenPlaygroundCommand()
             }
@@ -78,6 +75,29 @@ private struct OpenPlaygroundCommand: View {
             openWindow(id: PlaygroundWindow.id)
         }
         .keyboardShortcut("g", modifiers: [.command, .shift])
+    }
+}
+
+/// Adds a font folder from the File menu. An open library window shows the
+/// folder; with none open, a new library window opens on it.
+private struct AddFontFolderCommand: View {
+    let catalog: FontCatalog
+    let settings: AppSettings
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some View {
+        Button("Add Font Folder…") {
+            if LibraryWindows.frontmost != nil {
+                NotificationCenter.default.post(name: .addFontFolder, object: nil)
+            } else {
+                catalog.addFolder { url in
+                    // A new window restores the remembered destination.
+                    settings.remember(location: .folder(url))
+                    openWindow(id: LibraryWindows.id)
+                }
+            }
+        }
+        .keyboardShortcut("o", modifiers: [.command, .shift])
     }
 }
 
