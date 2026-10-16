@@ -39,6 +39,9 @@ final class FontCatalog: ObservableObject {
     private var folderCounts: [URL: Int] = [:]
     private var tagCounts: [String: Int] = [:]
     private(set) var taggedFamilyIDs: [String: Set<FontFamily.ID>] = [:]
+    /// The faces of each family that more than one font file provides, in
+    /// face order. Families without duplicates have no entry.
+    private(set) var duplicatesByFamily: [FontFamily.ID: [FontDuplicate]] = [:]
 
     private let defaults = UserDefaults.standard
     private let engine = FontScanEngine()
@@ -534,6 +537,8 @@ final class FontCatalog: ObservableObject {
                 return sourceCounts[.local, default: 0]
             case .mixed:
                 return mixedPairs.count
+            case .duplicates:
+                return duplicatesByFamily.count
             default:
                 return families.count
             }
@@ -1189,9 +1194,19 @@ final class FontCatalog: ObservableObject {
         var sources: [FontSource: Int] = [:]
         var scopeTotals: [SystemFontScope: Int] = [:]
         var folderTotals: [URL: Int] = [:]
+        let copiesByName = Self.duplicateCopies(installedRecords: installedRecords, folderRecords: folderRecords)
+        var duplicates: [FontFamily.ID: [FontDuplicate]] = [:]
 
         for family in families {
             byID[family.id] = family
+            if !copiesByName.isEmpty {
+                let familyDuplicates: [FontDuplicate] = family.faces.compactMap { face in
+                    copiesByName[face.postScriptName].map {
+                        FontDuplicate(postScriptName: face.postScriptName, styleName: face.styleName, copies: $0)
+                    }
+                }
+                if !familyDuplicates.isEmpty { duplicates[family.id] = familyDuplicates }
+            }
             sources[family.source, default: 0] += 1
             if family.source == .system {
                 systemCount += 1
@@ -1222,7 +1237,44 @@ final class FontCatalog: ObservableObject {
         sourceCounts = sources
         scopeCounts = scopeTotals
         folderCounts = folderTotals
+        duplicatesByFamily = duplicates
         rebuildTagCounts()
+    }
+
+    /// The files of every PostScript name that more than one file provides.
+    ///
+    /// The installed records name the file Core Text resolves each name to,
+    /// so that copy is the one in use; a folder font TypeCase activated is the
+    /// same file in both lists and is not a duplicate of itself. Two installed
+    /// files with one name are invisible here, because the installed font list
+    /// reports each name once.
+    private static func duplicateCopies(
+        installedRecords: [FaceRecord],
+        folderRecords: [FaceRecord]
+    ) -> [String: [FontFileCopy]] {
+        var inUse: [String: URL] = [:]
+        var copies: [String: [URL: FontSource]] = [:]
+        for record in installedRecords {
+            guard let url = record.face.fileURL?.standardizedFileURL else { continue }
+            inUse[record.face.postScriptName] = url
+            copies[record.face.postScriptName, default: [:]][url] = record.source
+        }
+        for record in folderRecords {
+            guard let url = record.face.fileURL?.standardizedFileURL else { continue }
+            if copies[record.face.postScriptName]?[url] == nil {
+                copies[record.face.postScriptName, default: [:]][url] = record.source
+            }
+        }
+        return copies.reduce(into: [:]) { result, entry in
+            guard entry.value.count > 1 else { return }
+            let name = entry.key
+            result[name] = entry.value
+                .map { FontFileCopy(url: $0.key, source: $0.value, isInUse: inUse[name] == $0.key) }
+                .sorted {
+                    if $0.isInUse != $1.isInUse { return $0.isInUse }
+                    return $0.url.path.localizedStandardCompare($1.url.path) == .orderedAscending
+                }
+        }
     }
 
     private static func systemScopes(for face: FontFace, home: URL, allUsers: URL) -> Set<SystemFontScope> {

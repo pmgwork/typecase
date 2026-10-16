@@ -50,6 +50,9 @@ final class AppSettings: ObservableObject {
     @Published var showMixedSection: Bool {
         didSet { defaults.set(showMixedSection, forKey: Key.showMixedSection) }
     }
+    @Published var showDuplicatesSection: Bool {
+        didSet { defaults.set(showDuplicatesSection, forKey: Key.showDuplicatesSection) }
+    }
     /// Per-face variable-axis adjustments, keyed by PostScript name and the
     /// four-character axis tag.
     @Published private(set) var variableAxes: [String: [String: Double]] {
@@ -81,6 +84,7 @@ final class AppSettings: ObservableObject {
         providerSections = Self.loadProviderSections(defaults: defaults)
         showTagsSection = defaults.object(forKey: Key.showTagsSection) as? Bool ?? true
         showMixedSection = defaults.object(forKey: Key.showMixedSection) as? Bool ?? true
+        showDuplicatesSection = defaults.object(forKey: Key.showDuplicatesSection) as? Bool ?? true
         variableAxes = (defaults.dictionary(forKey: Key.variableAxes) as? [String: [String: Double]]) ?? [:]
         lastSelection = defaults.stringArray(forKey: Key.lastSelection) ?? []
         lastLocation = defaults.string(forKey: Key.lastLocation) ?? ""
@@ -214,6 +218,7 @@ final class AppSettings: ObservableObject {
         if showMixedSection { sections.append(.mixed) }
         if showSystemSection { sections.append(.system) }
         if showLocalSection { sections.append(.local) }
+        if showDuplicatesSection { sections.append(.duplicates) }
         for provider in FontProviderRegistry.all where isProviderSectionVisible(provider.id) {
             sections.append(.provider(provider))
         }
@@ -230,6 +235,7 @@ final class AppSettings: ObservableObject {
             case .system: return showSystemSection
             case .local: return showLocalSection
             case .mixed: return showMixedSection
+            case .duplicates: return showDuplicatesSection
             default: return false
             }
         case .systemScope: return showSystemSection
@@ -317,6 +323,7 @@ final class AppSettings: ObservableObject {
         static let providerSections = "providerSections"
         static let showTagsSection = "showTagsSection"
         static let showMixedSection = "showMixedSection"
+        static let showDuplicatesSection = "showDuplicatesSection"
         static let variableAxes = "variableAxes"
         static let lastSelection = "lastSelection"
         static let lastLocation = "lastLocation"

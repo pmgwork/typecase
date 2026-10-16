@@ -380,6 +380,7 @@ private struct Sidebar: View {
                 if settings.showMixedSection { sectionRow(.mixed) }
                 if settings.showSystemSection { systemGroup }
                 if settings.showLocalSection { sectionRow(.local) }
+                if settings.showDuplicatesSection { sectionRow(.duplicates) }
             }
 
             if !providerSections.isEmpty {
@@ -1074,6 +1075,7 @@ private struct FontLibraryView: View {
             switch section {
             case .favorites: return "No favorites yet"
             case .local: return "No local fonts"
+            case .duplicates: return "No duplicates"
             default: return "No fonts"
             }
         case .folder(let folder): return "No fonts in \(folder.lastPathComponent)"
@@ -1089,6 +1091,7 @@ private struct FontLibraryView: View {
             switch section {
             case .favorites: return "Select a font and click the star to keep it here."
             case .local: return "Add a folder that contains font files to browse them without installing."
+            case .duplicates: return "No font file shares a PostScript name with another file."
             default: return "Change the search text or filters."
             }
         case .folder: return "This folder does not contain any supported font files."
@@ -1506,6 +1509,14 @@ private struct FontInspector: View {
                         metadataSection(metadata)
                     }
 
+                    if let duplicates = catalog.duplicatesByFamily[family.id] {
+                        DuplicateFilesSection(
+                            catalog: catalog,
+                            duplicates: duplicates,
+                            showsStyleNames: family.faces.count > 1
+                        )
+                    }
+
                     if let face = family.previewFace,
                        let variableAxes,
                        variableAxes.faceID == face.id,
@@ -1814,6 +1825,93 @@ private struct FontInspector: View {
 private struct MissingCharactersKey: Equatable {
     let familyID: String
     let text: String
+}
+
+/// The inspector's list of faces that more than one font file provides: each
+/// copy's path, source, and version, with the copy macOS uses first.
+private struct DuplicateFilesSection: View {
+    @ObservedObject var catalog: FontCatalog
+    let duplicates: [FontDuplicate]
+    let showsStyleNames: Bool
+    @State private var versions: [URL: String] = [:]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Label("Duplicates", systemImage: "exclamationmark.triangle")
+                    .font(.headline)
+                Spacer(minLength: 8)
+                Button("Show in Finder") {
+                    catalog.revealFiles(allURLs)
+                }
+                .controlSize(.small)
+                .help("Reveal every copy in Finder")
+            }
+            Text("Apps find fonts by PostScript name, so only one of these files can be used.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+            ForEach(duplicates) { duplicate in
+                VStack(alignment: .leading, spacing: 6) {
+                    if showsStyleNames {
+                        Text(duplicate.styleName)
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                    }
+                    ForEach(duplicate.copies) { copy in
+                        copyRow(copy)
+                    }
+                }
+            }
+        }
+        .task(id: duplicates) {
+            versions = [:]
+            var loaded: [URL: String] = [:]
+            for duplicate in duplicates {
+                for copy in duplicate.copies where loaded[copy.url] == nil {
+                    let metadata = await catalog.fontMetadata(
+                        forPostScriptName: duplicate.postScriptName,
+                        fileURL: copy.url
+                    )
+                    guard !Task.isCancelled else { return }
+                    if let version = metadata?.versionNumber { loaded[copy.url] = version }
+                }
+            }
+            versions = loaded
+        }
+    }
+
+    private var allURLs: [URL] {
+        var seen: Set<URL> = []
+        return duplicates.flatMap(\.copies).map(\.url).filter { seen.insert($0).inserted }
+    }
+
+    private func copyRow(_ copy: FontFileCopy) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(copy.url.path)
+                .font(.callout)
+                .lineLimit(2)
+                .truncationMode(.middle)
+                .help(copy.url.path)
+            Text(details(for: copy))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contextMenu {
+            Button("Show in Finder") { catalog.revealFiles([copy.url]) }
+            Button("Copy Path") { catalog.copyPaths([copy.url]) }
+        }
+    }
+
+    /// "In Use · Local · 1.002": whether macOS uses the copy, where it comes
+    /// from, and the version its name table reports.
+    private func details(for copy: FontFileCopy) -> String {
+        var parts: [String] = []
+        if copy.isInUse { parts.append("In Use") }
+        parts.append(copy.source.title)
+        if let version = versions[copy.url] { parts.append(version) }
+        return parts.joined(separator: " · ")
+    }
 }
 
 private struct ComparisonView: View {
