@@ -416,13 +416,17 @@ final class FontCatalog: ObservableObject {
     /// Saves a mixed-font combination from explicit faces. Returns nil when
     /// the Japanese or Latin face is missing.
     @discardableResult
-    func addMixedPair(references: [MixedScript: FontFaceReference]) -> FontPair? {
+    func addMixedPair(
+        references: [MixedScript: FontFaceReference],
+        typesetting: TypesettingOptions? = nil
+    ) -> FontPair? {
         guard let japanese = references[.japanese], let latin = references[.latin] else { return nil }
         let pair = FontPair(
             japanese: japanese,
             latin: latin,
             numbers: references[.numbers],
-            symbols: references[.symbols]
+            symbols: references[.symbols],
+            typesetting: typesetting
         )
         mixedPairs.append(pair)
         saveMixedPairs()

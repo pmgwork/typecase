@@ -88,7 +88,8 @@ struct PlaygroundView: View {
                 Label(copiedImage ? "Copied" : "Copy as Image",
                       systemImage: copiedImage ? "checkmark" : "doc.on.clipboard")
             }
-            .help(copiedImage ? "Image copied to clipboard" : "Copy the layout to the clipboard as an image")
+            .keyboardShortcut("c", modifiers: [.command, .option])
+            .help(copiedImage ? "Image copied to clipboard" : "Copy the layout to the clipboard as an image (⌥⌘C)")
         }
         ToolbarItem(placement: .confirmationAction) {
             Button {
@@ -96,7 +97,8 @@ struct PlaygroundView: View {
             } label: {
                 Label("Inspector", systemImage: "info.circle")
             }
-            .help("Show or hide the block settings")
+            .keyboardShortcut("i", modifiers: [.command, .option])
+            .help("Show or hide the block settings (⌥⌘I)")
         }
     }
 
@@ -168,6 +170,7 @@ private struct PlaygroundResolvedBlock {
     let family: FontFamily?
     let face: FontFace?
     let variations: [UInt32: Double]?
+    let typesetting: TypesettingOptions
 
     init(block: PlaygroundBlock, catalog: FontCatalog, settings: AppSettings) {
         let family = block.familyID.flatMap { catalog.familyByID[$0] }
@@ -177,6 +180,7 @@ private struct PlaygroundResolvedBlock {
         self.family = family
         self.face = face
         self.variations = face.map { settings.variationValues(for: $0.postScriptName) }
+        self.typesetting = block.typesetting
 
         if block.text.isEmpty {
             var language = family?.previewLanguage ?? .latin
@@ -202,8 +206,15 @@ private struct PlaygroundResolvedBlock {
             postScriptName: face?.postScriptName,
             fileURL: face?.fileURL,
             size: size,
-            variations: variations
+            variations: variations,
+            features: typesetting.features
         )
+    }
+
+    /// The OpenType features the block's face carries.
+    var availableFeatures: [OpenTypeFeature] {
+        guard let face else { return [] }
+        return OpenTypeFeatureReader.features(for: [(face.postScriptName, face.fileURL)])
     }
 }
 
@@ -221,7 +232,8 @@ private struct PlaygroundCanvas: View {
                 PlaygroundBlockRow(
                     block: block,
                     resolved: PlaygroundResolvedBlock(block: block, catalog: catalog, settings: settings),
-                    textColor: textColor
+                    textColor: textColor,
+                    isSelected: playground.selectedBlockID == block.id
                 )
                 .listRowSeparator(.hidden)
                 .listRowInsets(EdgeInsets(
@@ -360,18 +372,19 @@ private struct PlaygroundBlockRow: View {
     let block: PlaygroundBlock
     let resolved: PlaygroundResolvedBlock
     let textColor: Color
+    let isSelected: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(block.role.title)
-                .font(.caption)
-                .foregroundStyle(textColor.opacity(0.55))
+            caption
             PlaygroundTextEditor(
                 text: textBinding,
                 placeholder: block.text.isEmpty ? resolved.text : "",
                 postScriptName: resolved.face?.postScriptName,
                 fileURL: resolved.face?.fileURL,
                 variations: resolved.variations,
+                features: block.typesetting.features,
+                japaneseLatinSpacing: block.typesetting.japaneseLatinSpacing,
                 size: CGFloat(block.size),
                 lineHeight: block.lineHeight,
                 tracking: block.tracking,
@@ -400,6 +413,18 @@ private struct PlaygroundBlockRow: View {
                 playground.update(updated)
             }
         )
+    }
+
+    /// The role label; the active block adds its font and size, so the block
+    /// the inspector edits reads on the canvas without a selection background.
+    private var caption: some View {
+        Text(isSelected
+            ? "\(block.role.title) · \(helpText) · \(Int(block.size.rounded())) pt"
+            : block.role.title)
+            .font(.caption)
+            .foregroundStyle(textColor.opacity(isSelected ? 0.8 : 0.55))
+            .lineLimit(1)
+            .truncationMode(.middle)
     }
 
     private var helpText: String {
@@ -437,6 +462,8 @@ private struct PlaygroundBlockInspector: View {
                     }
                     Divider()
                     typographySection(block)
+                    Divider()
+                    featureSection(block, features: resolved.availableFeatures)
                 }
                 .padding(20)
             }
@@ -524,27 +551,52 @@ private struct PlaygroundBlockInspector: View {
 
     private func typographySection(_ block: PlaygroundBlock) -> some View {
         VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 8) {
+                Text("Typography")
+                    .font(.headline)
+                Spacer(minLength: 8)
+                // Only offered once the values have left the role's scale.
+                if !block.usesRoleTypography {
+                    Button("Reset to \(block.role.title)") {
+                        update(block) { $0.resetTypographyToRole() }
+                    }
+                    .buttonStyle(.link)
+                    .help("Return size, line height, and tracking to the \(block.role.description) defaults")
+                }
+            }
             slider(
                 "Size",
                 value: numberBinding(block, \.size),
                 range: PlaygroundMetrics.sizeRange,
                 step: 1,
-                valueText: "\(Int(block.size.rounded())) pt"
+                fractionDigits: 0,
+                unit: "pt"
             )
             slider(
                 "Line Height",
                 value: numberBinding(block, \.lineHeight),
                 range: PlaygroundMetrics.lineHeightRange,
                 step: 0.05,
-                valueText: String(format: "%.2f", block.lineHeight)
+                fractionDigits: 2,
+                unit: "×"
             )
             slider(
                 "Tracking",
                 value: numberBinding(block, \.tracking),
                 range: PlaygroundMetrics.trackingRange,
                 step: 0.1,
-                valueText: String(format: "%.1f pt", block.tracking)
+                fractionDigits: 1,
+                unit: "pt"
             )
+            slider(
+                "Japanese–Latin Space",
+                value: spacingPercentBinding(block),
+                range: 0...(TypesettingOptions.spacingRange.upperBound * 100),
+                step: 1,
+                fractionDigits: 0,
+                unit: "%"
+            )
+            .help("Space added between Japanese and Latin letters or figures, as a percentage of the font size (和欧間のアキ)")
             field("Alignment") {
                 Picker("Alignment", selection: alignmentBinding(block)) {
                     ForEach(PlaygroundAlignment.allCases) { alignment in
@@ -556,6 +608,24 @@ private struct PlaygroundBlockInspector: View {
                 .pickerStyle(.segmented)
                 .labelsHidden()
             }
+        }
+    }
+
+    /// The face's OpenType features as checkboxes, with a reset once any
+    /// differs from the font's default.
+    private func featureSection(_ block: PlaygroundBlock, features: [OpenTypeFeature]) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 8) {
+                Text("OpenType Features")
+                    .font(.headline)
+                Spacer(minLength: 8)
+                if block.typesetting.changedFeatureCount > 0 {
+                    Button("Reset") { update(block) { $0.typesetting.features = [:] } }
+                        .buttonStyle(.link)
+                        .help("Return every feature to the font's default")
+                }
+            }
+            OpenTypeFeatureList(features: features, options: typesettingBinding(block))
         }
     }
 
@@ -643,6 +713,21 @@ private struct PlaygroundBlockInspector: View {
         )
     }
 
+    private func typesettingBinding(_ block: PlaygroundBlock) -> Binding<TypesettingOptions> {
+        Binding(
+            get: { playground.block(id: block.id)?.typesetting ?? block.typesetting },
+            set: { newValue in update(block) { $0.typesetting = newValue } }
+        )
+    }
+
+    /// The Japanese–Latin space shown as a percentage of the em.
+    private func spacingPercentBinding(_ block: PlaygroundBlock) -> Binding<Double> {
+        Binding(
+            get: { (playground.block(id: block.id)?.typesetting ?? block.typesetting).japaneseLatinSpacing * 100 },
+            set: { newValue in update(block) { $0.typesetting.japaneseLatinSpacing = newValue / 100 } }
+        )
+    }
+
     private func alignmentBinding(_ block: PlaygroundBlock) -> Binding<PlaygroundAlignment> {
         Binding(
             get: { playground.block(id: block.id)?.alignment ?? block.alignment },
@@ -666,23 +751,40 @@ private struct PlaygroundBlockInspector: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
+    /// A slider with a number field beside it, so a value can be dragged or
+    /// typed exactly. Typed values are clamped into the slider's range.
     private func slider(
         _ title: String,
         value: Binding<Double>,
         range: ClosedRange<Double>,
         step: Double,
-        valueText: String
+        fractionDigits: Int,
+        unit: String
     ) -> some View {
-        field(title) {
+        let clamped = Binding(
+            get: { value.wrappedValue },
+            set: { value.wrappedValue = PlaygroundMetrics.clamp($0, to: range) }
+        )
+        return field(title) {
             HStack(spacing: 8) {
                 Slider(value: value, in: range, step: step)
                     .controlSize(.small)
                     .labelsHidden()
                     .accessibilityLabel(title)
-                Text(valueText)
-                    .monospacedDigit()
+                TextField(
+                    title,
+                    value: clamped,
+                    format: .number.precision(.fractionLength(fractionDigits))
+                )
+                .labelsHidden()
+                .textFieldStyle(.roundedBorder)
+                .controlSize(.small)
+                .multilineTextAlignment(.trailing)
+                .monospacedDigit()
+                .frame(width: 52)
+                Text(unit)
                     .foregroundStyle(.secondary)
-                    .frame(width: 56, alignment: .trailing)
+                    .frame(width: 16, alignment: .leading)
             }
         }
     }
@@ -699,7 +801,10 @@ private struct PlaygroundPrintPage: View {
         VStack(alignment: .leading, spacing: 0) {
             ForEach(layout.blocks) { block in
                 let resolved = PlaygroundResolvedBlock(block: block, catalog: catalog, settings: settings)
-                Text(resolved.text.isEmpty ? " " : resolved.text)
+                Text(JapaneseLatinSpacing.attributed(
+                    resolved.text.isEmpty ? " " : resolved.text,
+                    spacing: block.typesetting.spacing(at: CGFloat(block.size))
+                ))
                     .font(resolved.font(size: CGFloat(block.size)))
                     .lineSpacing(CGFloat(block.size) * CGFloat(max(block.lineHeight - 1, 0)))
                     .tracking(CGFloat(block.tracking))
