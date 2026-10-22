@@ -22,6 +22,11 @@ final class FontCatalog: ObservableObject {
     @Published private(set) var categoryOverrides: [String: FontCategory] = [:]
     @Published private(set) var isLoading = false
     @Published var errorMessage: String?
+    @Published private(set) var activationCompletedFiles = 0
+    @Published private(set) var activationTotalFiles = 0
+    @Published private(set) var isUpdatingActivation = false
+    private var pendingActivationOperations = 0
+    private static let registrationBatchSize = 32
     /// Increments whenever catalog or user data changes; invalidates derived caches.
     @Published private(set) var dataRevision = 0
     /// Increments when the family list changes; windows use it to reconcile selection.
@@ -863,6 +868,7 @@ final class FontCatalog: ObservableObject {
         abortingWhen shouldAbort: () -> Bool
     ) async -> Bool {
         var didRegister = false
+        var actions: [FontRegistrationAction] = []
         for url in changedFiles {
             if shouldAbort() { break }
             guard let cached = files[url], !cached.descriptorNames.isEmpty,
@@ -873,7 +879,12 @@ final class FontCatalog: ObservableObject {
                 enabled: true,
                 skipIfAlreadyScoped: false
             )
-            let outcomes = await registrar.synchronize([action])
+            actions.append(action)
+        }
+        for start in stride(from: 0, to: actions.count, by: Self.registrationBatchSize) {
+            if shouldAbort() { break }
+            let end = min(start + Self.registrationBatchSize, actions.count)
+            let outcomes = await registrar.synchronize(Array(actions[start..<end]))
             if outcomes.contains(where: \.succeeded) { didRegister = true }
         }
         return didRegister
@@ -885,6 +896,7 @@ final class FontCatalog: ObservableObject {
     /// registering undo when a manager is provided. The row's radio button and
     /// the context menu, including a multi-selection, all come through here.
     func setEnabled(_ enabled: Bool, families: [FontFamily], undoManager: UndoManager? = nil) {
+        guard !isUpdatingActivation else { return }
         let states = activationStates(for: families)
             .filter { $0.enabled != enabled }
             .map { FontActivationState(url: $0.url, names: $0.names, enabled: enabled) }
@@ -900,6 +912,7 @@ final class FontCatalog: ObservableObject {
         in family: FontFamily,
         undoManager: UndoManager? = nil
     ) {
+        guard !isUpdatingActivation else { return }
         let urls = Set(faces.compactMap(\.fileURL?.standardizedFileURL))
         let states = activationStates(for: [family])
             .filter { urls.contains($0.url.standardizedFileURL) && $0.enabled != enabled }
@@ -994,28 +1007,48 @@ final class FontCatalog: ObservableObject {
         }
         guard !actions.isEmpty else { return }
 
-        let urls = Set(enabledByURL.keys)
+        // Publish before starting work so the first click immediately gets
+        // feedback. Undo/Redo may enqueue another operation; retain serial order.
+        if pendingActivationOperations == 0 {
+            activationCompletedFiles = 0
+            activationTotalFiles = 0
+        }
+        pendingActivationOperations += 1
+        activationTotalFiles += actions.count
+        isUpdatingActivation = true
         userRegistrationRevision += 1
         Task { [weak self] in
             guard let self else { return }
             await self.registrationQueue.enqueue { [weak self] in
                 guard let self else { return }
-                let outcomes = await self.registrar.synchronize(actions)
-                self.applyToggleOutcomes(outcomes, enabledByURL: enabledByURL)
-                // Activation switches a face between the registered font and
-                // its file, which can resolve to different coverage data.
-                await self.coverage.invalidate(urls: urls)
-                let changedNames = Set(outcomes.filter(\.succeeded).flatMap(\.names))
-                if !changedNames.isEmpty {
-                    self.regroup(affectedBy: changedNames)
-                    FontResolver.shared.invalidate(names: changedNames, urls: urls)
+                defer {
+                    self.pendingActivationOperations -= 1
+                    self.isUpdatingActivation = self.pendingActivationOperations > 0
                 }
-                self.dataRevision += 1
+                var failures: [String] = []
+                for start in stride(from: 0, to: actions.count, by: Self.registrationBatchSize) {
+                    let end = min(start + Self.registrationBatchSize, actions.count)
+                    let batch = Array(actions[start..<end])
+                    let outcomes = await self.registrar.synchronize(batch)
+                    self.applyToggleOutcomes(outcomes, enabledByURL: enabledByURL, reportErrors: false)
+                    failures += outcomes.filter { !$0.succeeded }.map { $0.errorDescription ?? $0.url.lastPathComponent }
+                    let successful = outcomes.filter(\.succeeded)
+                    let urls = Set(successful.map(\.url))
+                    await self.coverage.invalidate(urls: urls)
+                    let changedNames = Set(successful.flatMap(\.names))
+                    if !changedNames.isEmpty {
+                        self.regroup(affectedBy: changedNames)
+                        FontResolver.shared.invalidate(names: changedNames, urls: urls)
+                    }
+                    self.activationCompletedFiles += batch.count
+                    self.dataRevision += 1
+                }
+                if !failures.isEmpty { self.errorMessage = failures.joined(separator: "\n") }
             }
         }
     }
 
-    private func applyToggleOutcomes(_ outcomes: [FontRegistrationOutcome], enabledByURL: [URL: Bool]) {
+    private func applyToggleOutcomes(_ outcomes: [FontRegistrationOutcome], enabledByURL: [URL: Bool], reportErrors: Bool = true) {
         var failures: [String] = []
         for outcome in outcomes {
             let enabled = enabledByURL[outcome.url] ?? true
@@ -1032,7 +1065,7 @@ final class FontCatalog: ObservableObject {
             }
         }
         defaults.set(Array(activeManagedNames), forKey: "activeManagedFonts")
-        if !failures.isEmpty {
+        if reportErrors && !failures.isEmpty {
             errorMessage = failures.joined(separator: "\n")
         }
     }

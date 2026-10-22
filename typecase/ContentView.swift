@@ -101,6 +101,20 @@ struct ContentView: View {
                 .help("Filter by category and status, and choose the list order")
             }
 
+            ToolbarItem(placement: .confirmationAction) {
+                if catalog.isUpdatingActivation {
+                    HStack(spacing: 6) {
+                        ProgressView()
+                            .controlSize(.small)
+                        Text(verbatim: "\(catalog.activationCompletedFiles)/\(catalog.activationTotalFiles)")
+                            .monospacedDigit()
+                            .font(.caption)
+                    }
+                    .accessibilityLabel(String(localized: "Change Font Activation"))
+                    .help(String(localized: "Change Font Activation"))
+                }
+            }
+
             ToolbarSpacer(.fixed, placement: .confirmationAction)
 
             ToolbarItem(placement: .confirmationAction) {
@@ -704,6 +718,7 @@ private struct FontLibraryView: View {
                         FontFamilyRow(
                             family: family,
                             isExpanded: expandedFamilyID == family.id,
+                            isUpdatingActivation: catalog.isUpdatingActivation,
                             previewText: settings.effectivePreviewText(for: family, entered: viewState.previewText),
                             previewSize: settings.previewSize,
                             previewTextColor: settings.previewTextColor,
@@ -797,12 +812,12 @@ private struct FontLibraryView: View {
             Button(activationTitle("Activate", count: targets.count)) {
                 setEnabled(true, families: targets)
             }
-            .disabled(!targets.contains(where: \.canActivate))
+            .disabled(catalog.isUpdatingActivation || !targets.contains(where: \.canActivate))
 
             Button(activationTitle("Deactivate", count: targets.count)) {
                 setEnabled(false, families: targets)
             }
-            .disabled(!targets.contains(where: \.canDeactivate))
+            .disabled(catalog.isUpdatingActivation || !targets.contains(where: \.canDeactivate))
 
             Divider()
 
@@ -1163,6 +1178,7 @@ private let activationTint = Color.green
 private struct FontFamilyRow: View, Equatable {
     let family: FontFamily
     let isExpanded: Bool
+    let isUpdatingActivation: Bool
     let previewText: String
     let previewSize: Double
     let previewTextColor: Color?
@@ -1179,6 +1195,7 @@ private struct FontFamilyRow: View, Equatable {
     static func == (lhs: FontFamilyRow, rhs: FontFamilyRow) -> Bool {
         lhs.family == rhs.family
             && lhs.isExpanded == rhs.isExpanded
+            && lhs.isUpdatingActivation == rhs.isUpdatingActivation
             && lhs.previewText == rhs.previewText
             && lhs.previewSize == rhs.previewSize
             && lhs.previewTextColor == rhs.previewTextColor
@@ -1231,6 +1248,7 @@ private struct FontFamilyRow: View, Equatable {
                                             .foregroundStyle(face.isInstalled ? activationTint : Color.secondary)
                                     }
                                     .buttonStyle(.borderless)
+                                    .disabled(isUpdatingActivation)
                                     .help(face.isInstalled ? "Deactivate" : "Activate")
                                     .frame(width: 16)
                                 } else {
@@ -1296,6 +1314,8 @@ private struct FontFamilyRow: View, Equatable {
                     .foregroundStyle(activationColor)
             }
             .buttonStyle(.borderless)
+            .disabled(isUpdatingActivation)
+            .accessibilityLabel(activationHelp)
             .help(activationHelp)
             .frame(width: 16)
         } else {
