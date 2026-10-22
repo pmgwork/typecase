@@ -76,29 +76,7 @@ struct ContentView: View {
             }
 
             ToolbarItem(placement: .confirmationAction) {
-                Menu {
-                    Picker(String(localized: "Category"), selection: $viewState.category) {
-                        Text(String(localized: "All Categories")).tag(FontCategory?.none)
-                        ForEach(FontCategory.allCases) { category in
-                            Text(category.title).tag(Optional(category))
-                        }
-                    }
-                    Divider()
-                    Picker(String(localized: "Status"), selection: $viewState.activationFilter) {
-                        ForEach(ActivationFilter.allCases) { filter in
-                            Text(filter.title).tag(filter)
-                        }
-                    }
-                    Divider()
-                    Picker(String(localized: "Sort By"), selection: $viewState.sortOrder) {
-                        ForEach(LibrarySortOrder.allCases) { order in
-                            Text(order.title).tag(order)
-                        }
-                    }
-                } label: {
-                    Label(String(localized: "Filter"), systemImage: "line.3.horizontal.decrease.circle")
-                }
-                .help(String(localized: "Filter by category and status, and choose the list order"))
+                LibraryFilterMenu(viewState: viewState)
             }
 
             ToolbarItem(placement: .confirmationAction) {
@@ -1543,22 +1521,39 @@ private struct FontInspector: View {
                         missingCharactersNotice
                     }
 
-                    Group {
-                        inspectorDetail(String(localized: "Source"), family.source.title)
-                        inspectorDetail(String(localized: "Language"), family.languageDescription)
-                        inspectorDetail(String(localized: "Styles"), "\(family.faces.count)")
+                    inspectorDetail(String(localized: "Classification"), family.category.title)
+                    inspectorDetail(String(localized: "Language"), family.languageDescription)
+                    inspectorDetail(String(localized: "Styles"), "\(family.faces.count)")
+
+                    inspectorDetail(String(localized: "Glyphs")) {
+                        HStack {
+                            Text(metadata?.glyphCount?.formatted() ?? "—")
+                                .font(.callout)
+                                .textSelection(.enabled)
+                            Spacer(minLength: 12)
+                            Button(String(localized: "Browse Glyphs")) {
+                                openWindow(id: GlyphWindow.id, value: family.id)
+                            }
+                            .controlSize(.small)
+                            .disabled(family.previewFace == nil)
+                            .help(String(localized: "Show every character this font can display"))
+                        }
                     }
 
-                    Button {
-                        openWindow(id: GlyphWindow.id, value: family.id)
-                    } label: {
-                        Label(String(localized: "Browse Glyphs"), systemImage: "square.grid.3x3")
+                    if let face = family.previewFace,
+                       let variableAxes,
+                       variableAxes.faceID == face.id,
+                       !variableAxes.info.axes.isEmpty {
+                        variableAxesSection(face: face, info: variableAxes.info)
                     }
-                    .disabled(family.previewFace == nil)
-                    .help(String(localized: "Show every character this font can display"))
 
-                    if let metadata {
-                        metadataSection(metadata)
+                    Divider()
+
+                    inspectorDetail(String(localized: "Source"), family.source.title)
+                    if !family.isManaged {
+                        Label(family.source.managementHint, systemImage: "lock")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
                     }
 
                     if let duplicates = catalog.duplicatesByFamily[family.id] {
@@ -1569,22 +1564,9 @@ private struct FontInspector: View {
                         )
                     }
 
-                    if let face = family.previewFace,
-                       let variableAxes,
-                       variableAxes.faceID == face.id,
-                       !variableAxes.info.axes.isEmpty {
-                        variableAxesSection(face: face, info: variableAxes.info)
+                    if let metadata {
+                        metadataSection(metadata)
                     }
-
-                    if !family.isManaged {
-                        Label(family.source.managementHint, systemImage: "lock")
-                            .font(.callout)
-                            .foregroundStyle(.secondary)
-                    }
-
-                    Divider()
-
-                    classificationSection(for: family)
                 }
                 .padding(20)
             }
@@ -1700,33 +1682,6 @@ private struct FontInspector: View {
         return "\(family.name) \(face.styleName)"
     }
 
-    private func classificationBinding(for family: FontFamily) -> Binding<FontCategory> {
-        Binding(
-            get: { family.category },
-            set: { catalog.setCategory($0, for: family) }
-        )
-    }
-
-    /// The user-editable classification. While it differs from the value the
-    /// font file implies, the detected value stays visible as a caption.
-    private func classificationSection(for family: FontFamily) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            inspectorDetail(String(localized: "Classification")) {
-                Picker(String(localized: "Classification"), selection: classificationBinding(for: family)) {
-                    ForEach(FontCategory.allCases) { category in
-                        Text(category.title).tag(category)
-                    }
-                }
-                .labelsHidden()
-            }
-            if family.category != family.detectedCategory {
-                Text(String(localized: "Detected: \(family.detectedCategory.title)"))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-        }
-    }
-
     // MARK: - File metadata
 
     /// The details read from the font file: version, glyph count, embedding
@@ -1735,16 +1690,12 @@ private struct FontInspector: View {
     @ViewBuilder
     private func metadataSection(_ metadata: FontNameTable.Metadata) -> some View {
         let hasSummary = metadata.versionNumber != nil
-            || metadata.glyphCount != nil
             || metadata.embedding != nil
             || metadata.designer != nil
         if hasSummary {
             Group {
                 if let version = metadata.versionNumber {
                     inspectorDetail(String(localized: "Version"), version)
-                }
-                if let glyphCount = metadata.glyphCount {
-                    inspectorDetail(String(localized: "Glyphs"), glyphCount.formatted())
                 }
                 if let embedding = metadata.embedding {
                     inspectorDetail(String(localized: "Embedding"), embedding.title)

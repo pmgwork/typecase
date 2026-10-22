@@ -165,7 +165,7 @@ struct MixedPairEditorView: View {
                     }
                     GridRow {
                         characterField(.kerning) {
-                            MixedPairPopUp(
+                            TypographyPopUp(
                                 title: String(localized: "Kerning"),
                                 options: TypesettingOptions.Kerning.allCases.map {
                                     .init(id: $0.rawValue, title: $0 == .romanOnly ? String(localized: "Roman Only") : $0.title)
@@ -175,7 +175,7 @@ struct MixedPairEditorView: View {
                             .help(String(localized: "Auto uses the fonts' kerning pairs; Metrics – Roman Only sets Japanese text solid; 0 turns kerning off"))
                         }
                         characterField(.japaneseLatin) {
-                            MixedPairPopUp(
+                            TypographyPopUp(
                                 title: String(localized: "Japanese–Latin Space"),
                                 options: spacingOptions,
                                 selection: spacingSelection
@@ -226,7 +226,7 @@ struct MixedPairEditorView: View {
                 .frame(minWidth: 0, maxWidth: .infinity)
         }
         .frame(minWidth: 0, maxWidth: .infinity)
-        .frame(height: MixedPairPopUp.height)
+        .frame(height: TypographyPopUp.height)
     }
 
     /// The Japanese–Latin spaces of Illustrator's Mojikumi settings, in em.
@@ -234,8 +234,8 @@ struct MixedPairEditorView: View {
         (String(localized: "None"), 0), ("1/8 em", 0.125), ("1/4 em", 0.25), ("1/3 em", 1.0 / 3), ("1/2 em", 0.5),
     ]
 
-    private var spacingOptions: [MixedPairPopUp.Option] {
-        var options = Self.spacingPresets.map { MixedPairPopUp.Option(id: String($0.value), title: $0.title) }
+    private var spacingOptions: [TypographyPopUp.Option] {
+        var options = Self.spacingPresets.map { TypographyPopUp.Option(id: String($0.value), title: $0.title) }
         let current = draft.typesetting.japaneseLatinSpacing
         if !Self.spacingPresets.contains(where: { $0.value == current }) {
             options.append(.init(id: String(current), title: String(localized: "Custom (\(Int((current * 100).rounded()))%)")))
@@ -312,7 +312,7 @@ struct MixedPairEditorView: View {
                     HStack(spacing: 6) {
                         fontMenu(script, selection: familyBinding(for: script))
                         styleMenu(script, selection: faceBinding(for: script))
-                            .frame(width: MixedPairPopUp.styleWidth)
+                            .frame(width: TypographyPopUp.styleWidth)
                     }
                 }
             }
@@ -350,14 +350,14 @@ struct MixedPairEditorView: View {
         _ script: MixedScript,
         selection: Binding<FontFamily.ID?>
     ) -> some View {
-        MixedPairPopUp(
+        TypographyPopUp(
             title: String(localized: "\(script.title) font"),
-            options: [MixedPairPopUp.Option(id: nil, title: script.isRequired ? String(localized: "None") : String(localized: "Automatic"))]
+            options: [TypographyPopUp.Option(id: nil, title: script.isRequired ? String(localized: "None") : String(localized: "Automatic"))]
                 + catalog.families(for: script).map { .init(id: $0.id, title: $0.name) },
             selection: selection
         )
         .frame(maxWidth: .infinity)
-        .frame(height: MixedPairPopUp.height)
+        .frame(height: TypographyPopUp.height)
         .help(fontHelp(for: script))
     }
 
@@ -379,14 +379,14 @@ struct MixedPairEditorView: View {
         selection: Binding<String?>
     ) -> some View {
         let family = family(for: script)
-        return MixedPairPopUp(
+        return TypographyPopUp(
             title: String(localized: "\(script.title) style"),
             options: family?.faces.map { .init(id: $0.postScriptName, title: $0.styleName) }
                 ?? [.init(id: nil, title: String(localized: "No style"))],
             selection: selection,
             enabled: family != nil
         )
-        .frame(height: MixedPairPopUp.height)
+        .frame(height: TypographyPopUp.height)
         .help(String(localized: "Choose the \(script.title) weight"))
     }
 
@@ -629,7 +629,7 @@ private struct PresetComboBox: NSViewRepresentable {
     }
 
     func sizeThatFits(_ proposal: ProposedViewSize, nsView: ComboContainer, context: Context) -> CGSize? {
-        CGSize(width: proposal.width ?? 100, height: MixedPairPopUp.height)
+        CGSize(width: proposal.width ?? 100, height: TypographyPopUp.height)
     }
 
     func updateNSView(_ container: ComboContainer, context: Context) {
@@ -705,96 +705,6 @@ private struct PresetComboBox: NSViewRepresentable {
         func controlTextDidEndEditing(_ notification: Notification) {
             guard let box = notification.object as? NSComboBox else { return }
             commit(box)
-        }
-    }
-}
-
-/// A native AppKit pop-up with a consistent, compact width. SwiftUI's menu
-/// Picker sizes its button to its current title, leaving short weights much
-/// narrower than the font selector even with the same frame on both views.
-private struct MixedPairPopUp: NSViewRepresentable {
-    static let styleWidth: CGFloat = 92
-    static let height: CGFloat = 30
-
-    struct Option: Equatable {
-        let id: String?
-        let title: String
-    }
-
-    let title: String
-    let options: [Option]
-    @Binding var selection: String?
-    var enabled = true
-
-    func makeCoordinator() -> Coordinator {
-        Coordinator(selection: $selection)
-    }
-
-    func makeNSView(context: Context) -> PopUpContainer {
-        let container = PopUpContainer()
-        let button = container.button
-        button.target = context.coordinator
-        button.action = #selector(Coordinator.didChange(_:))
-        button.cell?.lineBreakMode = .byTruncatingTail
-        return container
-    }
-
-    func sizeThatFits(_ proposal: ProposedViewSize, nsView: PopUpContainer, context: Context) -> CGSize? {
-        CGSize(width: proposal.width ?? Self.styleWidth, height: Self.height)
-    }
-
-    func updateNSView(_ container: PopUpContainer, context: Context) {
-        let button = container.button
-        let coordinator = context.coordinator
-        coordinator.selection = $selection
-        if coordinator.options != options {
-            button.removeAllItems()
-            for option in options { button.addItem(withTitle: option.title) }
-            coordinator.options = options
-        }
-        let selectedIndex = options.firstIndex { $0.id == selection } ?? 0
-        if button.indexOfSelectedItem != selectedIndex {
-            button.selectItem(at: selectedIndex)
-        }
-        button.isEnabled = enabled
-        button.setAccessibilityLabel(title)
-    }
-
-    /// Keep the button's actual frame inside the fixed-width hosting view.
-    /// A bare NSPopUpButton can report a wider intrinsic size based on its
-    /// longest menu item and draw outside SwiftUI's frame.
-    final class PopUpContainer: NSView {
-        let button = NSPopUpButton(frame: .zero, pullsDown: false)
-
-        init() {
-            super.init(frame: .zero)
-            button.translatesAutoresizingMaskIntoConstraints = false
-            button.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-            addSubview(button)
-            NSLayoutConstraint.activate([
-                button.leadingAnchor.constraint(equalTo: leadingAnchor),
-                button.trailingAnchor.constraint(equalTo: trailingAnchor),
-                button.centerYAnchor.constraint(equalTo: centerYAnchor),
-                button.heightAnchor.constraint(equalToConstant: 26),
-            ])
-        }
-
-        required init?(coder: NSCoder) {
-            fatalError("init(coder:) has not been implemented")
-        }
-    }
-
-    final class Coordinator: NSObject {
-        var selection: Binding<String?>
-        var options: [Option] = []
-
-        init(selection: Binding<String?>) {
-            self.selection = selection
-        }
-
-        @objc func didChange(_ button: NSPopUpButton) {
-            guard options.indices.contains(button.indexOfSelectedItem) else { return }
-            selection.wrappedValue = options[button.indexOfSelectedItem].id
         }
     }
 }

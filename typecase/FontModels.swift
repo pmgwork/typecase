@@ -38,26 +38,6 @@ nonisolated struct FontSource: RawRepresentable, Hashable, Codable, Identifiable
     }
 }
 
-nonisolated enum FontCategory: String, Codable, CaseIterable, Identifiable, Sendable {
-    case sansSerif
-    case serif
-    case monospaced
-    case display
-    case unclassified
-
-    var id: String { rawValue }
-
-    var title: String {
-        switch self {
-        case .sansSerif: String(localized: "Sans Serif")
-        case .serif: String(localized: "Serif")
-        case .monospaced: String(localized: "Monospaced")
-        case .display: String(localized: "Display")
-        case .unclassified: String(localized: "Unclassified")
-        }
-    }
-}
-
 nonisolated struct FontFace: Identifiable, Hashable, Codable, Sendable {
     let postScriptName: String
     let styleName: String
@@ -127,11 +107,8 @@ nonisolated struct FontFamily: Identifiable, Hashable, Sendable {
     let localizedNames: [FontLanguage: String]
     let manufacturer: String
     let source: FontSource
-    /// The effective classification: the user's override, or the detected one.
+    /// Automatically detected from the font's metadata, names, and outlines.
     let category: FontCategory
-    /// The classification detected from the font file's traits, kept so the
-    /// inspector can show what the user's override replaced.
-    let detectedCategory: FontCategory
     let faces: [FontFace]
 
     /// The display name: the family's name in its highest-priority language,

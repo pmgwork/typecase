@@ -29,7 +29,7 @@ struct PlaygroundView: View {
                     .inspectorColumnWidth(min: 280, ideal: 320, max: 400)
             }
             .frame(minWidth: 720, minHeight: 480)
-            .navigationTitle(playground.currentLayout.name)
+            .navigationTitle("PlayGround")
             .toolbar { toolbarItems }
             .onAppear(perform: setStarterFont)
             .onChange(of: catalog.familiesRevision) { _, _ in setStarterFont() }
@@ -79,6 +79,7 @@ struct PlaygroundView: View {
             } label: {
                 Label(String(localized: "Add Block"), systemImage: "plus")
             }
+            .labelStyle(.titleAndIcon)
             .help(String(localized: "Add a heading or paragraph after the selected block"))
         }
         ToolbarItem(placement: .confirmationAction) {
@@ -130,6 +131,7 @@ struct PlaygroundView: View {
         } label: {
             Label(playground.currentLayout.name, systemImage: "rectangle.3.group")
         }
+        .labelStyle(.titleAndIcon)
         .fixedSize()
         .help(String(localized: "Choose a layout, or create, rename, duplicate, or delete one"))
     }
@@ -272,6 +274,7 @@ private struct PlaygroundCanvas: View {
         }
         .listStyle(.inset)
         .scrollContentBackground(.hidden)
+        .contentMargins(.vertical, 16, for: .scrollContent)
         .background(paperColor)
         // The canvas list has no selection of its own, so it never receives
         // the Delete command; watch the window's key presses instead.
@@ -376,7 +379,13 @@ private struct PlaygroundBlockRow: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            caption
+            Button {
+                playground.selectedBlockID = block.id
+            } label: {
+                caption.frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .buttonStyle(.plain)
+            .help(String(localized: "Select a block"))
             PlaygroundTextEditor(
                 text: textBinding,
                 placeholder: block.text.isEmpty ? resolved.text : "",
@@ -398,8 +407,18 @@ private struct PlaygroundBlockRow: View {
             )
             .frame(maxWidth: .infinity, alignment: block.alignment.frameAlignment)
         }
-        .padding(.vertical, 4)
-        .padding(.horizontal, 12)
+        .padding(12)
+        .background {
+            RoundedRectangle(cornerRadius: 8)
+                .fill(textColor.opacity(isSelected ? 0.035 : 0))
+        }
+        .overlay {
+            RoundedRectangle(cornerRadius: 8)
+                .strokeBorder(textColor.opacity(isSelected ? 0.25 : 0), lineWidth: 1)
+                .allowsHitTesting(false)
+        }
+        .frame(maxWidth: 900)
+        .frame(maxWidth: .infinity)
         .contentShape(.rect)
         .help(String(localized: "\(block.role.title) · \(helpText) · Click to edit text; press Esc, then Delete, to remove the block"))
     }
@@ -422,7 +441,7 @@ private struct PlaygroundBlockRow: View {
             ? "\(block.role.title) · \(helpText) · \(Int(block.size.rounded())) pt"
             : block.role.title)
             .font(.caption)
-            .foregroundStyle(textColor.opacity(isSelected ? 0.8 : 0.55))
+            .foregroundStyle(textColor.opacity(isSelected ? 0.8 : 0.6))
             .lineLimit(1)
             .truncationMode(.middle)
     }
@@ -440,22 +459,13 @@ private struct PlaygroundBlockInspector: View {
     @EnvironmentObject private var settings: AppSettings
     @EnvironmentObject private var playground: PlaygroundStore
     @State private var missingCharacters: [String] = []
+    @State private var featuresExpanded = false
 
     var body: some View {
         if let block = playground.selectedBlock {
             let resolved = PlaygroundResolvedBlock(block: block, catalog: catalog, settings: settings)
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
-                    blockHeader(block)
-                    field(String(localized: "Element")) {
-                        Picker(String(localized: "Element"), selection: roleBinding(block)) {
-                            ForEach(PlaygroundBlockRole.allCases) { role in
-                                Text("\(role.title) · \(role.description)").tag(role)
-                            }
-                        }
-                        .labelsHidden()
-                    }
-                    Divider()
                     fontSection(block)
                     if !missingCharacters.isEmpty {
                         missingCharactersNotice
@@ -463,9 +473,38 @@ private struct PlaygroundBlockInspector: View {
                     Divider()
                     typographySection(block)
                     Divider()
-                    featureSection(block, features: resolved.availableFeatures)
+                    DisclosureGroup(isExpanded: $featuresExpanded) {
+                        featureSection(block, features: resolved.availableFeatures)
+                            .padding(.top, 12)
+                    } label: {
+                        Text(String(localized: "OpenType Features"))
+                            .font(.headline)
+                    }
                 }
                 .padding(20)
+            }
+            .background(Color(nsColor: .controlBackgroundColor))
+            .safeAreaInset(edge: .top, spacing: 0) {
+                VStack(alignment: .leading, spacing: 12) {
+                    blockHeader(block)
+                    TypographyPopUp(
+                        title: String(localized: "Element"),
+                        options: PlaygroundBlockRole.allCases.map {
+                            .init(id: $0.rawValue, title: "\($0.title) · \($0.description)")
+                        },
+                        selection: Binding(
+                            get: { block.role.rawValue },
+                            set: { value in
+                                guard let value, let role = PlaygroundBlockRole(rawValue: value) else { return }
+                                roleBinding(block).wrappedValue = role
+                            }
+                        )
+                    )
+                }
+                .padding(.horizontal, 20)
+                .padding(.vertical, 16)
+                .background(Color(nsColor: .controlBackgroundColor))
+                .overlay(alignment: .bottom) { Divider() }
             }
             .task(id: missingCharactersKey(block: block, resolved: resolved)) {
                 missingCharacters = []
@@ -518,33 +557,25 @@ private struct PlaygroundBlockInspector: View {
 
     private func fontSection(_ block: PlaygroundBlock) -> some View {
         let family = block.familyID.flatMap { catalog.familyByID[$0] }
+        var familyOptions: [TypographyPopUp.Option] = [
+            .init(id: nil, title: String(localized: "System Font"))
+        ]
+        if let familyID = block.familyID, family == nil {
+            familyOptions.append(.init(id: familyID, title: String(localized: "Missing Font")))
+        }
+        familyOptions += catalog.families.map { .init(id: $0.id, title: $0.name) }
         return VStack(alignment: .leading, spacing: 14) {
             field(String(localized: "Font")) {
-                Picker(String(localized: "Font"), selection: familyBinding(block)) {
-                    Text(String(localized: "System Font")).tag(String?.none)
-                    // A font the library no longer carries keeps its block
-                    // readable instead of leaving the picker blank.
-                    if let familyID = block.familyID, family == nil {
-                        Text(String(localized: "Missing Font")).tag(Optional(familyID))
-                    }
-                    ForEach(catalog.families) { item in
-                        Text(item.name).tag(Optional(item.id))
-                    }
-                }
-                .labelsHidden()
+                TypographyPopUp(title: String(localized: "Font"), options: familyOptions,
+                                selection: familyBinding(block))
             }
             field(String(localized: "Style")) {
-                Picker(String(localized: "Style"), selection: faceBinding(block)) {
-                    if let family {
-                        ForEach(family.faces) { face in
-                            Text(face.styleName).tag(Optional(face.id))
-                        }
-                    } else {
-                        Text("Regular").tag(String?.none)
-                    }
-                }
-                .labelsHidden()
-                .disabled(family == nil)
+                TypographyPopUp(
+                    title: String(localized: "Style"),
+                    options: family?.faces.map { .init(id: $0.id, title: $0.styleName) }
+                        ?? [.init(id: nil, title: "Regular")],
+                    selection: faceBinding(block), enabled: family != nil
+                )
             }
         }
     }
@@ -564,49 +595,47 @@ private struct PlaygroundBlockInspector: View {
                     .help(String(localized: "Return size, line height, and tracking to the \(block.role.description) defaults"))
                 }
             }
-            slider(
-                String(localized: "Size"),
-                value: numberBinding(block, \.size),
-                range: PlaygroundMetrics.sizeRange,
-                step: 1,
-                fractionDigits: 0,
-                unit: "pt"
-            )
-            slider(
-                String(localized: "Line Height"),
-                value: numberBinding(block, \.lineHeight),
-                range: PlaygroundMetrics.lineHeightRange,
-                step: 0.05,
-                fractionDigits: 2,
-                unit: "×"
-            )
-            slider(
-                String(localized: "Tracking"),
-                value: numberBinding(block, \.tracking),
-                range: PlaygroundMetrics.trackingRange,
-                step: 0.1,
-                fractionDigits: 1,
-                unit: "pt"
-            )
-            slider(
-                String(localized: "Japanese–Latin Space"),
-                value: spacingPercentBinding(block),
-                range: 0...(TypesettingOptions.spacingRange.upperBound * 100),
-                step: 1,
-                fractionDigits: 0,
-                unit: "%"
-            )
-            .help(String(localized: "Space added between Japanese and Latin letters or figures, as a percentage of the font size (和欧間のアキ)"))
+            Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 14) {
+                GridRow {
+                    metricField(String(localized: "Size"), value: numberBinding(block, \.size),
+                                range: PlaygroundMetrics.sizeRange, fractionDigits: 0, unit: "pt")
+                    metricField(String(localized: "Line Height"), value: numberBinding(block, \.lineHeight),
+                                range: PlaygroundMetrics.lineHeightRange, fractionDigits: 2, unit: "×")
+                }
+                GridRow {
+                    metricField(String(localized: "Tracking"), value: numberBinding(block, \.tracking),
+                                range: PlaygroundMetrics.trackingRange, fractionDigits: 1, unit: "pt")
+                    metricField(String(localized: "Japanese–Latin Space"), value: spacingPercentBinding(block),
+                                range: 0...(TypesettingOptions.spacingRange.upperBound * 100),
+                                fractionDigits: 0, unit: "%")
+                        .help(String(localized: "Space added between Japanese and Latin letters or figures, as a percentage of the font size (和欧間のアキ)"))
+                }
+            }
             field(String(localized: "Alignment")) {
-                Picker(String(localized: "Alignment"), selection: alignmentBinding(block)) {
+                HStack(spacing: 2) {
                     ForEach(PlaygroundAlignment.allCases) { alignment in
-                        Label(alignment.title, systemImage: alignment.symbol)
-                            .labelStyle(.iconOnly)
-                            .tag(alignment)
+                        Button {
+                            alignmentBinding(block).wrappedValue = alignment
+                        } label: {
+                            Image(systemName: alignment.symbol)
+                                .frame(maxWidth: .infinity, minHeight: 26)
+                                .background {
+                                    if block.alignment == alignment {
+                                        RoundedRectangle(cornerRadius: 5)
+                                            .fill(Color(nsColor: .selectedControlColor))
+                                    }
+                                }
+                        }
+                        .buttonStyle(.plain)
+                        .help(alignment.title)
+                        .accessibilityLabel(alignment.title)
+                        .accessibilityAddTraits(block.alignment == alignment ? .isSelected : [])
                     }
                 }
-                .pickerStyle(.segmented)
-                .labelsHidden()
+                .padding(3)
+                .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 7))
+                .accessibilityElement(children: .contain)
+                .accessibilityLabel(String(localized: "Alignment"))
             }
         }
     }
@@ -615,15 +644,10 @@ private struct PlaygroundBlockInspector: View {
     /// differs from the font's default.
     private func featureSection(_ block: PlaygroundBlock, features: [OpenTypeFeature]) -> some View {
         VStack(alignment: .leading, spacing: 14) {
-            HStack(spacing: 8) {
-                Text(String(localized: "OpenType Features"))
-                    .font(.headline)
-                Spacer(minLength: 8)
-                if block.typesetting.changedFeatureCount > 0 {
-                    Button(String(localized: "Reset")) { update(block) { $0.typesetting.features = [:] } }
-                        .buttonStyle(.link)
-                        .help(String(localized: "Return every feature to the font's default"))
-                }
+            if block.typesetting.changedFeatureCount > 0 {
+                Button(String(localized: "Reset")) { update(block) { $0.typesetting.features = [:] } }
+                    .buttonStyle(.link)
+                    .help(String(localized: "Return every feature to the font's default"))
             }
             OpenTypeFeatureList(features: features, options: typesettingBinding(block))
         }
@@ -740,54 +764,46 @@ private struct PlaygroundBlockInspector: View {
     /// The inspector's eyebrow layout: a muted label above its control.
     private func field<Content: View>(
         _ title: String,
+        labelHeight: CGFloat? = nil,
         @ViewBuilder content: () -> Content
     ) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
+        VStack(alignment: .leading, spacing: 6) {
             Text(title)
                 .font(.callout)
                 .foregroundStyle(.secondary)
+                .frame(height: labelHeight, alignment: .bottomLeading)
             content()
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    /// A slider with a number field beside it, so a value can be dragged or
-    /// typed exactly. Typed values are clamped into the slider's range.
-    private func slider(
-        _ title: String,
-        value: Binding<Double>,
-        range: ClosedRange<Double>,
-        step: Double,
-        fractionDigits: Int,
-        unit: String
+    /// Compact numeric fields keep the common typography settings together.
+    private func metricField(
+        _ title: String, value: Binding<Double>, range: ClosedRange<Double>,
+        fractionDigits: Int, unit: String
     ) -> some View {
         let clamped = Binding(
             get: { value.wrappedValue },
             set: { value.wrappedValue = PlaygroundMetrics.clamp($0, to: range) }
         )
-        return field(title) {
-            HStack(spacing: 8) {
-                Slider(value: value, in: range, step: step)
-                    .controlSize(.small)
+        return field(title, labelHeight: 28) {
+            HStack(spacing: 6) {
+                TextField(title, value: clamped,
+                          format: .number.precision(.fractionLength(fractionDigits)))
                     .labelsHidden()
-                    .accessibilityLabel(title)
-                TextField(
-                    title,
-                    value: clamped,
-                    format: .number.precision(.fractionLength(fractionDigits))
-                )
-                .labelsHidden()
-                .textFieldStyle(.roundedBorder)
-                .controlSize(.small)
-                .multilineTextAlignment(.trailing)
-                .monospacedDigit()
-                .frame(width: 52)
+                    .textFieldStyle(.roundedBorder)
+                    .multilineTextAlignment(.trailing)
+                    .monospacedDigit()
+                    .frame(maxWidth: .infinity)
                 Text(unit)
+                    .font(.callout)
                     .foregroundStyle(.secondary)
                     .frame(width: 16, alignment: .leading)
             }
+            .controlSize(.large)
         }
     }
+
 }
 
 /// The layout drawn as a page for the clipboard image: no list chrome, no

@@ -9,7 +9,7 @@ import Foundation
 nonisolated struct FontScanSnapshot: Codable, Sendable {
     /// Bump when the parsed records change shape or meaning, so snapshots
     /// written by an older build are discarded instead of misread.
-    static let currentFormatVersion = 2
+    static let currentFormatVersion = 3
 
     var formatVersion = Self.currentFormatVersion
     var appBuild = Self.appBuild

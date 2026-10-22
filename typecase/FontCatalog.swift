@@ -19,7 +19,6 @@ final class FontCatalog: ObservableObject {
     /// Tag names the user created. A tag stays in the sidebar while no font
     /// carries it, so it can be prepared before it is assigned.
     @Published private(set) var knownTags: Set<String> = []
-    @Published private(set) var categoryOverrides: [String: FontCategory] = [:]
     @Published private(set) var isLoading = false
     @Published var errorMessage: String?
     @Published private(set) var activationCompletedFiles = 0
@@ -87,8 +86,6 @@ final class FontCatalog: ObservableObject {
         userTags = (defaults.dictionary(forKey: "familyTags") as? [String: [String]] ?? [:])
             .mapValues(Set.init)
         migrateTags(storedNames: defaults.stringArray(forKey: "tagNames") ?? [])
-        categoryOverrides = (defaults.dictionary(forKey: "categoryOverrides") as? [String: String] ?? [:])
-            .compactMapValues(FontCategory.init(rawValue:))
         activeManagedNames = Set(defaults.stringArray(forKey: "activeManagedFonts") ?? [])
         mixedPairs = Self.loadMixedPairs(defaults: defaults)
         rebuildAllTags()
@@ -349,30 +346,6 @@ final class FontCatalog: ObservableObject {
         }
         taggedFamilyIDs = ids
         tagCounts = ids.mapValues(\.count)
-    }
-
-    /// Stores the user's classification, or clears the override when the chosen
-    /// value is the one the font file already implies.
-    func setCategory(_ category: FontCategory, for family: FontFamily) {
-        if category == family.detectedCategory {
-            categoryOverrides.removeValue(forKey: family.id)
-        } else {
-            categoryOverrides[family.id] = category
-        }
-        defaults.set(categoryOverrides.mapValues(\.rawValue), forKey: "categoryOverrides")
-        if let index = families.firstIndex(where: { $0.id == family.id }) {
-            let old = families[index]
-            let updated = FontFamily(
-                id: old.id, localizedName: old.localizedName,
-                languages: old.languages, localizedNames: old.localizedNames,
-                manufacturer: old.manufacturer, source: old.source,
-                category: category, detectedCategory: old.detectedCategory,
-                faces: old.faces
-            )
-            families[index] = updated
-            familyByID[old.id] = updated
-        }
-        dataRevision += 1
     }
 
     // MARK: - Mixed pairs
@@ -714,17 +687,15 @@ final class FontCatalog: ObservableObject {
 
         let activeNames = activeManagedNames
         let deactivatedNames = deactivatedManagedNames
-        let overrides = categoryOverrides
         let grouped = await Task.detached(priority: .userInitiated) {
             Self.group(
                 installedRecords: snapshot.installedRecords,
                 folderRecords: snapshot.folderRecords,
                 activeNames: activeNames,
-                deactivatedNames: deactivatedNames,
-                categoryOverrides: overrides
+                deactivatedNames: deactivatedNames
             )
         }.value
-        guard !hasLoadedOnce, refreshTask == nil, overrides == categoryOverrides else { return }
+        guard !hasLoadedOnce, refreshTask == nil else { return }
         folderRecords = snapshot.folderRecords
         families = grouped
         rebuildIndexes()
@@ -789,20 +760,18 @@ final class FontCatalog: ObservableObject {
         ))
 
         // Grouping and localized name sorting can be expensive for large font
-        // libraries. Only apply the snapshot if activation/preferences have not
+        // libraries. Only apply the snapshot if activation has not
         // changed while the background work was running.
         let registrationRevision = userRegistrationRevision
         let activeNames = activeManagedNames
         let deactivatedNames = deactivatedManagedNames
-        let overrides = categoryOverrides
         let grouped: [FontFamily]? = output.hasChanges || !hasLoadedOnce
             ? await Task.detached(priority: .userInitiated) {
                 Self.group(
                     installedRecords: output.installedRecords,
                     folderRecords: output.folderRecords,
                     activeNames: activeNames,
-                    deactivatedNames: deactivatedNames,
-                    categoryOverrides: overrides
+                    deactivatedNames: deactivatedNames
                 )
             }.value
             : nil
@@ -827,7 +796,7 @@ final class FontCatalog: ObservableObject {
 
         if output.hasChanges || !hasLoadedOnce {
             installedRecords = output.installedRecords
-            if registrationRevision == userRegistrationRevision, overrides == categoryOverrides,
+            if registrationRevision == userRegistrationRevision,
                let grouped {
                 families = grouped
                 rebuildIndexes()
@@ -1175,8 +1144,7 @@ final class FontCatalog: ObservableObject {
             installedRecords: installedRecords,
             folderRecords: folderRecords,
             activeNames: activeManagedNames,
-            deactivatedNames: deactivatedManagedNames,
-            categoryOverrides: categoryOverrides
+            deactivatedNames: deactivatedManagedNames
         )
         rebuildIndexes()
         FontResolver.shared.invalidate()
@@ -1186,8 +1154,7 @@ final class FontCatalog: ObservableObject {
         installedRecords: [FaceRecord],
         folderRecords: [FaceRecord],
         activeNames: Set<String>,
-        deactivatedNames: Set<String>,
-        categoryOverrides: [String: FontCategory]
+        deactivatedNames: Set<String>
     ) -> [FontFamily] {
         var installedNames: Set<String> = []
         var records: [FaceRecord] = []
@@ -1205,7 +1172,7 @@ final class FontCatalog: ObservableObject {
                 || (installedNames.contains(name) && !deactivatedNames.contains(name))
             records.append(record.withInstalled(isInstalled))
         }
-        return group(records, categoryOverrides: categoryOverrides)
+        return group(records)
     }
 
     /// Registration changes only the installed flag of faces in the affected
@@ -1230,7 +1197,7 @@ final class FontCatalog: ObservableObject {
                 || (installedNames.contains(name) && !deactivatedManagedNames.contains(name))
             records.append(record.withInstalled(installed))
         }
-        let updated = Dictionary(uniqueKeysWithValues: Self.group(records, categoryOverrides: categoryOverrides)
+        let updated = Dictionary(uniqueKeysWithValues: Self.group(records)
             .map { ($0.id, $0) })
         for index in families.indices {
             if let family = updated[families[index].id] {
@@ -1448,17 +1415,19 @@ final class FontCatalog: ObservableObject {
     /// half a frame, so scrolling and typing stay smooth while it runs.
     private static let seedSliceDuration: CFAbsoluteTime = 0.008
 
-    nonisolated private static func group(_ records: [FaceRecord], categoryOverrides: [String: FontCategory]) -> [FontFamily] {
+    nonisolated private static func group(_ records: [FaceRecord]) -> [FontFamily] {
         Dictionary(grouping: records, by: {
             familyID(for: $0.family)
         })
         .compactMap { id, records -> FontFamily? in
             guard let first = records.first else { return nil }
             var facesByName: [String: FontFace] = [:]
+            var categoriesByName: [String: FontCategory] = [:]
             for record in records {
                 let existing = facesByName[record.face.postScriptName]
                 if existing == nil || record.face.isManaged {
                     facesByName[record.face.postScriptName] = record.face
+                    categoriesByName[record.face.postScriptName] = record.category
                 }
             }
             // The PostScript name settles faces with the same weight and style
@@ -1483,6 +1452,7 @@ final class FontCatalog: ObservableObject {
                     names[language] = name
                 }
             }
+            let detectedCategory = FontClassifier.familyCategory(Array(categoriesByName.values))
             return FontFamily(
                 id: id,
                 localizedName: first.family,
@@ -1490,8 +1460,7 @@ final class FontCatalog: ObservableObject {
                 localizedNames: localizedNames,
                 manufacturer: first.manufacturer,
                 source: source,
-                category: categoryOverrides[id] ?? first.category,
-                detectedCategory: first.category,
+                category: detectedCategory,
                 faces: deduplicated
             )
         }
