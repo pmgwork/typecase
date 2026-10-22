@@ -13,8 +13,7 @@ nonisolated struct FontProvider: Identifiable, Hashable, Sendable {
     let title: String
     /// The short label shown at the end of a list row.
     let shortTitle: String
-    /// The sidebar and Settings row icon: a bundled mark for the font
-    /// services, an SF Symbol for everything else.
+    /// A neutral symbol shared by services; brand artwork is not bundled.
     let icon: SourceIcon
     /// Shown for fonts only the provider's own app can activate.
     let managementHint: String
@@ -48,18 +47,18 @@ nonisolated struct FontProvider: Identifiable, Hashable, Sendable {
     }
 }
 
-/// The known font services, in sidebar order. Each service carries its own
-/// mark, bundled on a shared canvas so the rows keep one icon column width.
+/// Known font services, in sidebar order. Provider ids stay stable even when
+/// their display names change, preserving saved navigation and preferences.
 nonisolated enum FontProviderRegistry {
     static let adobe = FontProvider(
         id: "adobe",
         title: "Adobe Fonts",
         shortTitle: "Adobe",
-        icon: .asset("AdobeFontsMark"),
-        managementHint: "Activate or deactivate in Adobe Creative Cloud",
-        emptyMessage: "Fonts activated in Adobe Creative Cloud appear here.",
-        pathMatchers: ["adobe", "coresync", "livetype"],
-        manufacturerMatchers: ["adobe"],
+        icon: .symbol("cloud"),
+        managementHint: String(localized: "Activate or deactivate in Adobe Creative Cloud"),
+        emptyMessage: String(localized: "Fonts activated in Adobe Creative Cloud appear here."),
+        pathMatchers: ["/adobe/coresync/", "/coresync/plugins/livetype/"],
+        manufacturerMatchers: [],
         manifestURLs: [],
         order: 0
     )
@@ -68,9 +67,9 @@ nonisolated enum FontProviderRegistry {
         id: "morisawa",
         title: "Morisawa Fonts",
         shortTitle: "Morisawa",
-        icon: .asset("MorisawaMark"),
-        managementHint: "Activate or deactivate in Morisawa Desktop Manager",
-        emptyMessage: "Fonts activated in Morisawa Desktop Manager appear here.",
+        icon: .symbol("cloud"),
+        managementHint: String(localized: "Activate or deactivate in Morisawa Desktop Manager"),
+        emptyMessage: String(localized: "Fonts activated in Morisawa Desktop Manager appear here."),
         pathMatchers: ["/library/fonts/morisawafonts/"],
         manufacturerMatchers: [],
         manifestURLs: [],
@@ -84,11 +83,11 @@ nonisolated enum FontProviderRegistry {
     /// No manufacturer rule: owned Fontworks fonts must stay Local or System.
     static let fontworks = FontProvider(
         id: "fontworks",
-        title: "Fontworks LETS",
+        title: "LETS",
         shortTitle: "LETS",
-        icon: .asset("LetsMark"),
-        managementHint: "Activate or deactivate in the LETS desktop app",
-        emptyMessage: "Fonts activated in the LETS desktop app appear here.",
+        icon: .symbol("cloud"),
+        managementHint: String(localized: "Activate or deactivate in the LETS desktop app"),
+        emptyMessage: String(localized: "Fonts activated in the LETS desktop app appear here."),
         pathMatchers: ["/fontworks/", "/lets/"],
         manufacturerMatchers: [],
         manifestURLs: [
@@ -101,7 +100,24 @@ nonisolated enum FontProviderRegistry {
         order: 2
     )
 
-    static let all: [FontProvider] = [adobe, morisawa, fontworks]
+    static let monotype = FontProvider(
+        id: "monotype",
+        title: "Monotype Fonts",
+        shortTitle: "Monotype",
+        icon: .symbol("cloud"),
+        managementHint: String(localized: "Activate or deactivate in Monotype Desktop App"),
+        emptyMessage: String(localized: "Fonts synced in Monotype Desktop App appear here."),
+        // Monotype Desktop App 7.8.1's font service uses a per-user hidden
+        // .monotypefonts-* cache under the temporary directory.
+        pathMatchers: ["/.monotypefonts-"],
+        // A manufacturer's name does not identify the subscription a font
+        // came from. Owned and macOS-bundled Monotype faces remain unchanged.
+        manufacturerMatchers: [],
+        manifestURLs: [],
+        order: 3
+    )
+
+    static let all: [FontProvider] = [adobe, morisawa, fontworks, monotype]
 
     private static let homeURL = FileManager.default.homeDirectoryForCurrentUser
 

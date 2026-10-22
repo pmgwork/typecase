@@ -6,11 +6,11 @@ struct SettingsView: View {
     var body: some View {
         TabView {
             GeneralSettingsView()
-                .tabItem { Label("General", systemImage: "gearshape") }
+                .tabItem { Label(String(localized: "General"), systemImage: "gearshape") }
             SidebarSettingsView()
-                .tabItem { Label("Sidebar", systemImage: "sidebar.left") }
+                .tabItem { Label(String(localized: "Sidebar"), systemImage: "sidebar.left") }
             PreviewSettingsView()
-                .tabItem { Label("Preview", systemImage: "textformat") }
+                .tabItem { Label(String(localized: "Preview"), systemImage: "textformat") }
         }
         .frame(width: 460)
     }
@@ -22,16 +22,28 @@ private struct GeneralSettingsView: View {
 
     var body: some View {
         Form {
-            Section("Startup") {
-                Toggle("Launch at login", isOn: launchAtLogin)
+            Section {
+                Picker(String(localized: "App Language"), selection: $settings.appLanguage) {
+                    ForEach(AppLanguage.allCases) { language in
+                        Text(verbatim: language.title).tag(language)
+                    }
+                }
+            } header: {
+                Text(String(localized: "Language"))
+            } footer: {
+                Text(String(localized: "Restart TypeCase to apply language changes."))
+            }
+
+            Section(String(localized: "Startup")) {
+                Toggle(String(localized: "Launch at login"), isOn: launchAtLogin)
 
                 if loginItem.requiresApproval {
                     HStack(spacing: 8) {
-                        Text("Allow TypeCase in Login Items to use this.")
+                        Text(String(localized: "Allow TypeCase in Login Items to use this."))
                             .font(.callout)
                             .foregroundStyle(.secondary)
                         Spacer(minLength: 8)
-                        Button("Open Login Items…") { loginItem.openLoginItemsSettings() }
+                        Button(String(localized: "Open Login Items…")) { loginItem.openLoginItemsSettings() }
                             .controlSize(.small)
                     }
                 }
@@ -44,8 +56,8 @@ private struct GeneralSettingsView: View {
 
             }
 
-            Section("Sorting") {
-                Toggle("Show favorites first", isOn: $settings.favoritesFirst)
+            Section(String(localized: "Sorting")) {
+                Toggle(String(localized: "Show favorites first"), isOn: $settings.favoritesFirst)
             }
         }
         .formStyle(.grouped)
@@ -67,10 +79,11 @@ private struct GeneralSettingsView: View {
 
 private struct SidebarSettingsView: View {
     @EnvironmentObject private var settings: AppSettings
+    @EnvironmentObject private var catalog: FontCatalog
 
     var body: some View {
         Form {
-            Section("Show these items in the sidebar:") {
+            Section(String(localized: "Show these items in the sidebar:")) {
                 SidebarItemToggle(
                     title: LibrarySection.all.title,
                     icon: LibrarySection.all.icon,
@@ -101,7 +114,7 @@ private struct SidebarSettingsView: View {
                     icon: LibrarySection.mixed.icon,
                     isOn: $settings.showMixedSection
                 )
-                ForEach(FontProviderRegistry.all) { provider in
+                ForEach(catalog.availableProviders) { provider in
                     SidebarItemToggle(
                         title: provider.title,
                         icon: provider.icon,
@@ -111,7 +124,7 @@ private struct SidebarSettingsView: View {
                         )
                     )
                 }
-                SidebarItemToggle(title: "Tags", systemImage: "tag", isOn: $settings.showTagsSection)
+                SidebarItemToggle(title: String(localized: "Tags"), systemImage: "tag", isOn: $settings.showTagsSection)
             }
         }
         .formStyle(.grouped)
@@ -152,8 +165,8 @@ private struct PreviewSettingsView: View {
 
     var body: some View {
         Form {
-            Section("Size") {
-                LabeledContent("Preview size") {
+            Section(String(localized: "Size")) {
+                LabeledContent(String(localized: "Preview size")) {
                     HStack(spacing: 8) {
                         Slider(value: $settings.previewSize, in: AppSettings.previewSizeRange, step: 1)
                             .frame(width: 200)
@@ -166,20 +179,20 @@ private struct PreviewSettingsView: View {
             }
 
             Section {
-                LabeledContent("Background") {
-                    colorControl($settings.previewBackgroundColor, fallback: Color(nsColor: .windowBackgroundColor), title: "Background Color")
+                LabeledContent(String(localized: "Background")) {
+                    colorControl($settings.previewBackgroundColor, fallback: Color(nsColor: .windowBackgroundColor), title: String(localized: "Background Color"))
                 }
-                LabeledContent("Text") {
-                    colorControl($settings.previewTextColor, fallback: Color(nsColor: .labelColor), title: "Text Color")
+                LabeledContent(String(localized: "Text")) {
+                    colorControl($settings.previewTextColor, fallback: Color(nsColor: .labelColor), title: String(localized: "Text Color"))
                 }
                 HStack {
-                    Button("System") {
+                    Button(String(localized: "System")) {
                         settings.setPreviewColors(background: nil, text: nil)
                     }
-                    Button("Light") {
+                    Button(String(localized: "Light")) {
                         settings.setPreviewColors(background: .white, text: .black)
                     }
-                    Button("Dark") {
+                    Button(String(localized: "Dark")) {
                         settings.setPreviewColors(
                             background: Color(red: 0.11, green: 0.11, blue: 0.12),
                             text: .white
@@ -187,9 +200,9 @@ private struct PreviewSettingsView: View {
                     }
                 }
             } header: {
-                Text("Colors")
+                Text(String(localized: "Colors"))
             } footer: {
-                Text("Applies to font specimens. Shared with the toolbar color controls. Choose System to follow the macOS appearance.")
+                Text(String(localized: "Applies to font specimens. Shared with the toolbar color controls. Choose System to follow the macOS appearance."))
                     .font(.callout)
                     .foregroundStyle(.secondary)
             }
@@ -202,17 +215,17 @@ private struct PreviewSettingsView: View {
                         prompt: Text(language.sampleDefault)
                     )
                 }
-                Button("Restore Defaults") { settings.resetSampleText() }
+                Button(String(localized: "Restore Defaults")) { settings.resetSampleText() }
             } header: {
-                Text("Sample Text")
+                Text(String(localized: "Sample Text"))
             } footer: {
-                Text("Used in previews while the preview text field is empty; a mixed specimen uses its own Japanese, English, digits, and symbols sample.")
+                Text(String(localized: "Used in previews while the preview text field is empty; a mixed specimen uses its own Japanese, English, digits, and symbols sample."))
                     .font(.callout)
                     .foregroundStyle(.secondary)
             }
         }
         .formStyle(.grouped)
-        .fixedSize(horizontal: false, vertical: true)
+        .frame(height: 600)
     }
 
     private func sampleTextBinding(_ language: FontLanguage) -> Binding<String> {
@@ -237,4 +250,5 @@ private func colorControl(_ color: Binding<Color?>, fallback: Color, title: Stri
 #Preview {
     SettingsView()
         .environmentObject(AppSettings())
+        .environmentObject(FontCatalog())
 }

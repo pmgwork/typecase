@@ -40,10 +40,10 @@ nonisolated enum PlaygroundBlockRole: String, Codable, CaseIterable, Identifiabl
 
     var description: String {
         switch self {
-        case .h1: "Heading 1"
-        case .h2: "Heading 2"
-        case .h3: "Heading 3"
-        case .paragraph: "Paragraph"
+        case .h1: String(localized: "Heading 1")
+        case .h2: String(localized: "Heading 2")
+        case .h3: String(localized: "Heading 3")
+        case .paragraph: String(localized: "Paragraph")
         }
     }
 
@@ -111,9 +111,9 @@ nonisolated enum PlaygroundAlignment: String, Codable, CaseIterable, Identifiabl
 
     var title: String {
         switch self {
-        case .leading: "Left"
-        case .center: "Center"
-        case .trailing: "Right"
+        case .leading: String(localized: "Left")
+        case .center: String(localized: "Center")
+        case .trailing: String(localized: "Right")
         }
     }
 
@@ -261,7 +261,7 @@ nonisolated struct PlaygroundLayout: Identifiable, Codable, Equatable, Sendable 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = try container.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
-        name = try container.decodeIfPresent(String.self, forKey: .name) ?? "Untitled"
+        name = try container.decodeIfPresent(String.self, forKey: .name) ?? String(localized: "Untitled")
         blocks = try container.decodeIfPresent([PlaygroundBlock].self, forKey: .blocks) ?? []
     }
 }
@@ -299,7 +299,7 @@ final class PlaygroundStore: ObservableObject {
                 let original = layouts[index]
                 var previous = original
                 previous.id = UUID()
-                previous.name = uniqueName(basedOn: "\(original.name) Previous")
+                previous.name = uniqueName(basedOn: String(localized: "\(original.name) Previous"))
 
                 var scale = Self.starterLayout(name: original.name)
                 scale.id = original.id
@@ -443,7 +443,7 @@ final class PlaygroundStore: ObservableObject {
     }
 
     func addLayout() {
-        let layout = Self.starterLayout(name: uniqueName(basedOn: "Untitled"))
+        let layout = Self.starterLayout(name: uniqueName(basedOn: String(localized: "Untitled")))
         layouts.append(layout)
         persistLayouts()
         selectLayout(layout.id)
@@ -452,7 +452,7 @@ final class PlaygroundStore: ObservableObject {
     func duplicateCurrentLayout() {
         var copy = currentLayout
         copy.id = UUID()
-        copy.name = uniqueName(basedOn: "\(currentLayout.name) Copy")
+        copy.name = uniqueName(basedOn: String(localized: "\(currentLayout.name) Copy"))
         copy.blocks = copy.blocks.map { block in
             var block = block
             block.id = UUID()
@@ -513,7 +513,7 @@ final class PlaygroundStore: ObservableObject {
 
     /// The four text fields start without saved text. The canvas shows their
     /// role labels and language sample placeholders until the user types.
-    private static func starterLayout(name: String = "Untitled") -> PlaygroundLayout {
+    private static func starterLayout(name: String = String(localized: "Untitled")) -> PlaygroundLayout {
         PlaygroundLayout(name: name, blocks: [
             PlaygroundBlock(role: .h1),
             PlaygroundBlock(role: .h2),
@@ -548,7 +548,7 @@ final class PlaygroundStore: ObservableObject {
             return result
         }
 
-        let previousFour = ["PlayGround", "Typography", "文字組み", ""]
+        let previousFour = ["PlayGround", String(localized: "Typography"), "文字組み", ""]
         let fourRoles = PlaygroundBlockRole.allCases
         let matchesFour = layout.blocks.count == fourRoles.count &&
             zip(layout.blocks, zip(fourRoles, previousFour)).allSatisfy { block, expected in

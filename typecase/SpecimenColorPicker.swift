@@ -56,7 +56,7 @@ private struct SpecimenColorPopover: View {
                 .font(.headline)
                 .frame(maxWidth: .infinity, alignment: .leading)
             picker
-            Button("Use System Color") {
+            Button(String(localized: "Use System Color")) {
                 color = nil
                 synchronize()
             }
@@ -102,12 +102,12 @@ private struct SpecimenColorPopover: View {
         .onKeyPress(.downArrow) { brightness = max(0, brightness - 0.02); publish(); return .handled }
         .accessibilityRepresentation {
             VStack {
-                Slider(value: componentBinding($hue), in: 0...1) { Text("Hue") }
-                Slider(value: componentBinding($saturation), in: 0...1) { Text("Saturation") }
-                Slider(value: componentBinding($brightness), in: 0...1) { Text("Brightness") }
+                Slider(value: componentBinding($hue), in: 0...1) { Text(String(localized: "Hue")) }
+                Slider(value: componentBinding($saturation), in: 0...1) { Text(String(localized: "Saturation")) }
+                Slider(value: componentBinding($brightness), in: 0...1) { Text(String(localized: "Brightness")) }
             }
         }
-        .help("Choose a color. Arrow keys adjust hue and brightness; Shift-arrow keys adjust saturation.")
+        .help(String(localized: "Choose a color. Arrow keys adjust hue and brightness; Shift-arrow keys adjust saturation."))
     }
 
     /// The hue wheel as a ring: the angular gradient starts at 3 o'clock and

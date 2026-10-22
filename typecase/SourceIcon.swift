@@ -1,8 +1,7 @@
 import SwiftUI
 
 /// The icon of a sidebar destination: an SF Symbol, or a bundled mark image
-/// that keeps its own colors. The font services ship their colored brand
-/// marks; everything else uses SF Symbols.
+/// that keeps its own colors. Service navigation uses neutral SF Symbols.
 nonisolated enum SourceIcon: Hashable, Sendable {
     case symbol(String)
     case asset(String)
@@ -31,5 +30,17 @@ struct SourceIconView: View {
                     )
                 )
         }
+    }
+}
+
+/// Shared symbol metrics for navigation destinations and folder status controls.
+struct SidebarIcon: View {
+    let icon: SourceIcon
+
+    var body: some View {
+        SourceIconView(icon: icon)
+            .font(.system(size: 16, weight: .regular))
+            .imageScale(.medium)
+            .frame(width: 20, height: 20)
     }
 }

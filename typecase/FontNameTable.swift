@@ -40,10 +40,10 @@ nonisolated enum FontNameTable {
 
         var title: String {
             switch self {
-            case .installable: "Installable"
-            case .restricted: "Restricted"
-            case .previewAndPrint: "Preview & Print"
-            case .editable: "Editable"
+            case .installable: String(localized: "Installable")
+            case .restricted: String(localized: "Restricted")
+            case .previewAndPrint: String(localized: "Preview & Print")
+            case .editable: String(localized: "Editable")
             }
         }
     }

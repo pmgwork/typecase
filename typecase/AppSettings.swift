@@ -7,6 +7,10 @@ import SwiftUI
 /// and the Settings scene.
 @MainActor
 final class AppSettings: ObservableObject {
+    @Published var appLanguage: AppLanguage {
+        didSet { appLanguage.save(to: defaults) }
+    }
+
     static let previewSizeRange: ClosedRange<Double> = 18...72
 
     @Published var previewSize: Double {
@@ -69,6 +73,7 @@ final class AppSettings: ObservableObject {
     private let defaults = UserDefaults.standard
 
     init() {
+        appLanguage = AppLanguage.load(from: defaults, domain: Bundle.main.bundleIdentifier ?? "pmgwork.typecase")
         let storedSize = defaults.object(forKey: Key.previewSize) as? Double ?? 32
         previewSize = min(max(storedSize, Self.previewSizeRange.lowerBound), Self.previewSizeRange.upperBound)
         sampleTexts = Self.loadSampleTexts(defaults: defaults)
@@ -122,7 +127,7 @@ final class AppSettings: ObservableObject {
     /// The built-in mixed specimen, shown while the preview text field is
     /// empty. It mixes Japanese, English, digits, and symbols so each part's
     /// width and balance can be compared.
-    static let mixedSampleDefault = "Typography は、文字を読むための技術であり、Design の一部でもあります。日本語・English・0123456789 に加えて、「」『』（）［］！？：；、。& / + − = % ¥ $ @ # などの記号が混ざると、Font ごとの字幅やバランスを確認しやすくなります。"
+    static let mixedSampleDefault = "Typographyは、文字を読むための技術であり、Designの一部でもあります。日本語・English・0123456789に加えて、「」『』（）［］！？：；、。& / + − = % ¥ $ @ # などの記号が混ざると、Fontごとの字幅やバランスを確認しやすくなります。"
 
     /// The text a mixed specimen shows: the entered text, or the mixed sample
     /// while the field is empty.

@@ -12,8 +12,8 @@ struct MixedFontPreview: View {
     /// The maximum number of lines, or nil to wrap the whole text.
     var lines: Int? = nil
     let fonts: [MixedScript: PreviewFaceSpec]
-    /// Space between Japanese and Latin text, in em.
-    var japaneseLatinSpacing: Double = 0
+    /// Tracking, tsume, and the Japanese–Latin space of the pair.
+    var typesetting = TypesettingOptions()
     /// The specimen colors chosen from the toolbar. `nil` keeps the system
     /// colors, so the window and list surfaces stay native.
     var backgroundColor: Color? = nil
@@ -50,7 +50,10 @@ struct MixedFontPreview: View {
 
     private var attributedText: AttributedString {
         var attributed = MixedText.attributed(text, fonts: resolvedFonts)
-        JapaneseLatinSpacing.apply(to: &attributed, spacing: size * CGFloat(japaneseLatinSpacing))
+        let ctFonts = typesetting.adjustsSpacing ? MixedText.ctFonts(for: fonts, size: size) : [:]
+        CharacterSpacing.apply(to: &attributed, size: size, options: typesetting) { character in
+            MixedText.font(for: MixedText.script(of: character), in: ctFonts)
+        }
         return attributed
     }
 
@@ -84,7 +87,7 @@ struct MixedTextEditor: View {
     let placeholder: String
     let size: CGFloat
     let fonts: [MixedScript: PreviewFaceSpec]
-    var japaneseLatinSpacing: Double = 0
+    var typesetting = TypesettingOptions()
     var textColor: Color? = nil
 
     var body: some View {
@@ -94,17 +97,17 @@ struct MixedTextEditor: View {
                     text: placeholder,
                     size: size,
                     fonts: fonts,
-                    japaneseLatinSpacing: japaneseLatinSpacing,
+                    typesetting: typesetting,
                     textColor: textColor
                 )
                 .allowsHitTesting(false)
-                .opacity(0.45)
+                .opacity(0.7)
             }
             MixedTextViewRepresentable(
                 text: $text,
                 size: size,
                 fonts: fonts,
-                japaneseLatinSpacing: japaneseLatinSpacing,
+                typesetting: typesetting,
                 textColor: textColor
             )
         }
@@ -119,7 +122,7 @@ private struct MixedTextViewRepresentable: NSViewRepresentable {
     @Binding var text: String
     let size: CGFloat
     let fonts: [MixedScript: PreviewFaceSpec]
-    var japaneseLatinSpacing: Double = 0
+    var typesetting = TypesettingOptions()
     var textColor: Color? = nil
 
     func makeNSView(context: Context) -> NSScrollView {
@@ -158,7 +161,7 @@ private struct MixedTextViewRepresentable: NSViewRepresentable {
             textColor: textColor,
             force: true
         )
-        context.coordinator.lastKey = Self.configKey(size: size, textColor: textColor, fonts: fonts, spacing: japaneseLatinSpacing)
+        context.coordinator.lastKey = Self.configKey(size: size, textColor: textColor, fonts: fonts, typesetting: typesetting)
         return scroll
     }
 
@@ -176,7 +179,7 @@ private struct MixedTextViewRepresentable: NSViewRepresentable {
                 textColor: textColor,
                 force: true
             )
-            context.coordinator.lastKey = Self.configKey(size: size, textColor: textColor, fonts: fonts, spacing: japaneseLatinSpacing)
+            context.coordinator.lastKey = Self.configKey(size: size, textColor: textColor, fonts: fonts, typesetting: typesetting)
             let length = (textView.string as NSString).length
             textView.setSelectedRange(NSRange(
                 location: min(selected.location, length),
@@ -184,7 +187,7 @@ private struct MixedTextViewRepresentable: NSViewRepresentable {
             ))
             context.coordinator.isApplying = false
         } else {
-            let key = Self.configKey(size: size, textColor: textColor, fonts: fonts, spacing: japaneseLatinSpacing)
+            let key = Self.configKey(size: size, textColor: textColor, fonts: fonts, typesetting: typesetting)
             if key != context.coordinator.lastKey {
                 context.coordinator.applyMixedAttributes(
                     to: textView,
@@ -208,9 +211,9 @@ private struct MixedTextViewRepresentable: NSViewRepresentable {
         size: CGFloat,
         textColor: Color?,
         fonts: [MixedScript: PreviewFaceSpec],
-        spacing: Double
+        typesetting: TypesettingOptions
     ) -> String {
-        var parts = [String(describing: size), String(describing: textColor), String(spacing)]
+        var parts = [String(describing: size), String(describing: textColor), String(describing: typesetting)]
         for script in MixedScript.allCases {
             if let spec = fonts[script] {
                 let features = spec.features.keys.sorted().map { "\($0)=\(spec.features[$0] == true)" }
@@ -250,7 +253,7 @@ private struct MixedTextViewRepresentable: NSViewRepresentable {
                     size: parent.size,
                     textColor: parent.textColor,
                     fonts: parent.fonts,
-                    spacing: parent.japaneseLatinSpacing
+                    typesetting: parent.typesetting
                 )
                 isApplying = false
             }
@@ -329,16 +332,21 @@ private struct MixedTextViewRepresentable: NSViewRepresentable {
                         range: run.range
                     )
                 }
-                // The Japanese–Latin space depends on each character's
-                // neighbors, so clear and recompute it outside IME input.
+                // Tsume and the Japanese–Latin space depend on each
+                // character's neighbors, so clear and recompute the kerning
+                // outside IME input.
                 if marked.location == NSNotFound {
                     storage.removeAttribute(.kern, range: NSRange(location: 0, length: storage.length))
                 }
-                JapaneseLatinSpacing.apply(
+                let ctFonts = resolved.mapValues { $0 as CTFont }
+                CharacterSpacing.apply(
                     to: storage,
-                    spacing: size * CGFloat(parent.japaneseLatinSpacing),
+                    size: size,
+                    options: parent.typesetting,
                     skipping: marked
-                )
+                ) { character in
+                    MixedText.font(for: MixedText.script(of: character), in: ctFonts)
+                }
                 storage.endEditing()
                 _ = force
             }

@@ -20,10 +20,10 @@ nonisolated enum LibrarySortOrder: String, CaseIterable, Identifiable, Sendable 
 
     var title: String {
         switch self {
-        case .name: "Name"
-        case .manufacturer: "Manufacturer"
-        case .dateAdded: "Recently Added"
-        case .activation: "Activated First"
+        case .name: String(localized: "Name")
+        case .manufacturer: String(localized: "Manufacturer")
+        case .dateAdded: String(localized: "Recently Added")
+        case .activation: String(localized: "Activated First")
         }
     }
 }
@@ -250,11 +250,11 @@ final class LibraryViewState: ObservableObject {
 
     /// Keeps the selection valid after the catalog changes and selects the first
     /// font when nothing is selected, matching the behavior of a fresh library.
-    func reconcile(with catalog: FontCatalog) {
+    func reconcile(with catalog: FontCatalog, settings: AppSettings) {
         // Before the first scan finishes there is nothing to reconcile against;
         // a restored selection must survive until the families arrive.
+        reconcileDestination(with: catalog, settings: settings)
         guard !catalog.familyIDs.isEmpty else { return }
-        reconcileDestination(with: catalog)
         // A saved pair is selected from its own section, so its id stays valid
         // alongside the family ids.
         let selectable = catalog.familyIDs.union(catalog.mixedPairs.map(\.selectionID))
@@ -264,11 +264,31 @@ final class LibraryViewState: ObservableObject {
         }
     }
 
-    /// Keeps the sidebar destination valid when the tag it names disappears,
-    /// so the window never shows an invisible selection.
-    func reconcileDestination(with catalog: FontCatalog) {
-        guard !catalog.familyIDs.isEmpty else { return }
-        if case .tag(let tag) = librarySelection, !catalog.hasTag(tag) {
+    /// A completed scan may remove the last font of the selected service.
+    /// Keep restored navigation during loading, then select a visible fallback.
+    func reconcileDestination(with catalog: FontCatalog, settings: AppSettings) {
+        guard catalog.hasCompletedInitialScan, !catalog.isLoading else { return }
+        let missingProvider: Bool
+        if case .section(let section) = librarySelection, let provider = section.provider {
+            missingProvider = !catalog.availableProviders.contains(where: { $0.id == provider.id })
+        } else {
+            missingProvider = false
+        }
+        let missingTag: Bool
+        if case .tag(let tag) = librarySelection {
+            missingTag = !catalog.hasTag(tag)
+        } else {
+            missingTag = false
+        }
+        guard missingProvider || missingTag else { return }
+        if let fallback = settings.visibleSidebarSections.first(where: { section in
+            guard let provider = section.provider else { return true }
+            return catalog.availableProviders.contains(where: { $0.id == provider.id })
+        }) {
+            librarySelection = .section(fallback)
+        } else if let folder = catalog.folders.first {
+            librarySelection = .folder(folder)
+        } else {
             librarySelection = .section(.all)
         }
     }

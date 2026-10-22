@@ -22,19 +22,19 @@ nonisolated struct FontSource: RawRepresentable, Hashable, Codable, Identifiable
 
     var title: String {
         if let provider { return provider.title }
-        return self == .local ? "Local" : "System"
+        return self == .local ? String(localized: "Local") : String(localized: "System")
     }
 
     var shortTitle: String {
         if let provider { return provider.shortTitle }
-        return self == .local ? "Local" : "OS"
+        return self == .local ? String(localized: "Local") : "OS"
     }
 
     var managementHint: String {
         if let provider { return provider.managementHint }
         return self == .local
-            ? "Added folder — use the radio button to activate or deactivate"
-            : "Installed on this Mac — deactivate it in Font Book"
+            ? String(localized: "Added folder — use the radio button to activate or deactivate")
+            : String(localized: "Installed on this Mac — deactivate it in Font Book")
     }
 }
 
@@ -49,11 +49,11 @@ nonisolated enum FontCategory: String, Codable, CaseIterable, Identifiable, Send
 
     var title: String {
         switch self {
-        case .sansSerif: "Sans Serif"
-        case .serif: "Serif"
-        case .monospaced: "Monospaced"
-        case .display: "Display"
-        case .unclassified: "Unclassified"
+        case .sansSerif: String(localized: "Sans Serif")
+        case .serif: String(localized: "Serif")
+        case .monospaced: String(localized: "Monospaced")
+        case .display: String(localized: "Display")
+        case .unclassified: String(localized: "Unclassified")
         }
     }
 }
@@ -258,12 +258,12 @@ nonisolated struct LibrarySection: Hashable, Identifiable, Sendable {
     var title: String {
         if let provider { return provider.title }
         switch self {
-        case .all: return "All Fonts"
-        case .favorites: return "Favorites"
-        case .system: return "System Fonts"
-        case .local: return "Local Library"
-        case .mixed: return "Mixed Fonts"
-        case .duplicates: return "Duplicates"
+        case .all: return String(localized: "All Fonts")
+        case .favorites: return String(localized: "Favorites")
+        case .system: return String(localized: "System Fonts")
+        case .local: return String(localized: "Local Library")
+        case .mixed: return String(localized: "Mixed Fonts")
+        case .duplicates: return String(localized: "Duplicates")
         default: return rawValue
         }
     }
@@ -301,8 +301,8 @@ enum SystemFontScope: String, CaseIterable, Hashable {
     var title: String {
         switch self {
         case .user: Self.homeDirectory.lastPathComponent
-        case .allUsers: "All Users"
-        case .system: "System"
+        case .allUsers: String(localized: "All Users")
+        case .system: String(localized: "System")
         }
     }
 
@@ -337,7 +337,13 @@ enum ActivationFilter: String, CaseIterable, Identifiable {
     case disabled
 
     var id: String { rawValue }
-    var title: String { rawValue.capitalized }
+    var title: String {
+        switch self {
+        case .all: String(localized: "All")
+        case .enabled: String(localized: "Enabled")
+        case .disabled: String(localized: "Disabled")
+        }
+    }
 }
 
 nonisolated extension URL {

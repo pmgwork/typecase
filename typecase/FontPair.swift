@@ -1,3 +1,4 @@
+import CoreText
 import Foundation
 import SwiftUI
 
@@ -99,10 +100,10 @@ nonisolated enum MixedScript: String, Codable, CaseIterable, Hashable, Sendable 
 
     var title: String {
         switch self {
-        case .japanese: "Japanese"
-        case .latin: "English"
-        case .numbers: "Numbers"
-        case .symbols: "Symbols"
+        case .japanese: String(localized: "Japanese")
+        case .latin: String(localized: "English")
+        case .numbers: String(localized: "Numbers")
+        case .symbols: String(localized: "Symbols")
         }
     }
 
@@ -200,11 +201,29 @@ nonisolated enum MixedText {
 
     /// The font that draws one part, falling back through the fonts that can
     /// stand in for it.
-    private static func font(for script: MixedScript, in fonts: [MixedScript: Font]) -> Font? {
+    static func font<F>(for script: MixedScript, in fonts: [MixedScript: F]) -> F? {
         for candidate in fallbackScripts(for: script) {
             if let font = fonts[candidate] { return font }
         }
         return nil
+    }
+
+    /// The drawable faces of a mix as Core Text fonts, for the spacing that
+    /// reads glyph metrics.
+    @MainActor
+    static func ctFonts(for specs: [MixedScript: PreviewFaceSpec], size: CGFloat) -> [MixedScript: CTFont] {
+        specs.compactMapValues { spec in
+            guard FontResolver.shared.isResolvable(postScriptName: spec.postScriptName, fileURL: spec.fileURL) else {
+                return nil
+            }
+            return FontResolver.shared.nsFont(
+                postScriptName: spec.postScriptName,
+                fileURL: spec.fileURL,
+                size: size,
+                variations: spec.variations,
+                features: spec.features
+            ) as CTFont
+        }
     }
 
     /// The fonts that can stand in for one part, most specific first.

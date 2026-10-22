@@ -13,10 +13,10 @@ nonisolated struct OpenTypeFeature: Identifiable, Hashable, Sendable {
 
         var title: String {
             switch self {
-            case .japanese: "Japanese"
-            case .letters: "Letters"
-            case .figures: "Figures"
-            case .stylisticSets: "Stylistic Sets"
+            case .japanese: String(localized: "Japanese")
+            case .letters: String(localized: "Letters")
+            case .figures: String(localized: "Figures")
+            case .stylisticSets: String(localized: "Stylistic Sets")
             }
         }
     }
@@ -40,62 +40,100 @@ nonisolated struct OpenTypeFeature: Identifiable, Hashable, Sendable {
     /// Every feature TypeCase can toggle, in menu order. A face only lists the
     /// ones its `GSUB` or `GPOS` table carries.
     static let catalog: [OpenTypeFeature] = [
-        OpenTypeFeature("palt", "Proportional Metrics", .japanese),
-        OpenTypeFeature("halt", "Half-Width Metrics", .japanese),
-        OpenTypeFeature("chws", "Contextual Half-Width Spacing", .japanese),
-        OpenTypeFeature("pkna", "Proportional Kana", .japanese),
-        OpenTypeFeature("hwid", "Half Widths", .japanese),
-        OpenTypeFeature("fwid", "Full Widths", .japanese),
-        OpenTypeFeature("jp78", "JIS78 Forms", .japanese),
-        OpenTypeFeature("jp90", "JIS90 Forms", .japanese),
-        OpenTypeFeature("jp04", "JIS2004 Forms", .japanese),
-        OpenTypeFeature("nlck", "NLC Kanji Forms", .japanese),
-        OpenTypeFeature("expt", "Expert Forms", .japanese),
+        OpenTypeFeature("palt", String(localized: "Proportional Metrics"), .japanese),
+        OpenTypeFeature("halt", String(localized: "Half-Width Metrics"), .japanese),
+        OpenTypeFeature("chws", String(localized: "Contextual Half-Width Spacing"), .japanese),
+        OpenTypeFeature("pkna", String(localized: "Proportional Kana"), .japanese),
+        OpenTypeFeature("hwid", String(localized: "Half Widths"), .japanese),
+        OpenTypeFeature("fwid", String(localized: "Full Widths"), .japanese),
+        OpenTypeFeature("jp78", String(localized: "JIS78 Forms"), .japanese),
+        OpenTypeFeature("jp90", String(localized: "JIS90 Forms"), .japanese),
+        OpenTypeFeature("jp04", String(localized: "JIS2004 Forms"), .japanese),
+        OpenTypeFeature("nlck", String(localized: "NLC Kanji Forms"), .japanese),
+        OpenTypeFeature("expt", String(localized: "Expert Forms"), .japanese),
 
-        OpenTypeFeature("kern", "Kerning", .letters, onByDefault: true),
-        OpenTypeFeature("liga", "Standard Ligatures", .letters, onByDefault: true),
-        OpenTypeFeature("calt", "Contextual Alternates", .letters, onByDefault: true),
-        OpenTypeFeature("dlig", "Discretionary Ligatures", .letters),
-        OpenTypeFeature("case", "Case-Sensitive Forms", .letters),
-        OpenTypeFeature("smcp", "Small Capitals", .letters),
-        OpenTypeFeature("c2sc", "Capitals to Small Capitals", .letters),
-        OpenTypeFeature("salt", "Stylistic Alternates", .letters),
-        OpenTypeFeature("swsh", "Swash", .letters),
+        OpenTypeFeature("kern", String(localized: "Kerning"), .letters, onByDefault: true),
+        OpenTypeFeature("liga", String(localized: "Standard Ligatures"), .letters, onByDefault: true),
+        OpenTypeFeature("calt", String(localized: "Contextual Alternates"), .letters, onByDefault: true),
+        OpenTypeFeature("dlig", String(localized: "Discretionary Ligatures"), .letters),
+        OpenTypeFeature("case", String(localized: "Case-Sensitive Forms"), .letters),
+        OpenTypeFeature("smcp", String(localized: "Small Capitals"), .letters),
+        OpenTypeFeature("c2sc", String(localized: "Capitals to Small Capitals"), .letters),
+        OpenTypeFeature("salt", String(localized: "Stylistic Alternates"), .letters),
+        OpenTypeFeature("swsh", String(localized: "Swash"), .letters),
 
-        OpenTypeFeature("lnum", "Lining Figures", .figures),
-        OpenTypeFeature("onum", "Oldstyle Figures", .figures),
-        OpenTypeFeature("pnum", "Proportional Figures", .figures),
-        OpenTypeFeature("tnum", "Tabular Figures", .figures),
-        OpenTypeFeature("frac", "Fractions", .figures),
-        OpenTypeFeature("zero", "Slashed Zero", .figures),
-        OpenTypeFeature("sups", "Superscript", .figures),
-        OpenTypeFeature("subs", "Subscript", .figures),
-        OpenTypeFeature("ordn", "Ordinals", .figures),
+        OpenTypeFeature("lnum", String(localized: "Lining Figures"), .figures),
+        OpenTypeFeature("onum", String(localized: "Oldstyle Figures"), .figures),
+        OpenTypeFeature("pnum", String(localized: "Proportional Figures"), .figures),
+        OpenTypeFeature("tnum", String(localized: "Tabular Figures"), .figures),
+        OpenTypeFeature("frac", String(localized: "Fractions"), .figures),
+        OpenTypeFeature("zero", String(localized: "Slashed Zero"), .figures),
+        OpenTypeFeature("sups", String(localized: "Superscript"), .figures),
+        OpenTypeFeature("subs", String(localized: "Subscript"), .figures),
+        OpenTypeFeature("ordn", String(localized: "Ordinals"), .figures),
     ] + (1...20).map { index in
-        OpenTypeFeature(String(format: "ss%02d", index), "Stylistic Set \(index)", .stylisticSets)
+        OpenTypeFeature(String(format: "ss%02d", index), String(localized: "Stylistic Set \(index)"), .stylisticSets)
     }
 }
 
 /// The typesetting choices a PlayGround block or a mixed pair carries on top
-/// of its fonts: OpenType feature overrides and the space between Japanese
-/// and Latin text (和欧間のアキ).
+/// of its fonts: OpenType feature overrides, the space between Japanese and
+/// Latin text (和欧間のアキ), and the Character panel settings Illustrator
+/// uses — kerning, tracking in 1/1000 em, and tsume (文字ツメ).
 nonisolated struct TypesettingOptions: Codable, Hashable, Sendable {
     /// The largest Japanese–Latin space the controls offer, in em.
     static let spacingRange: ClosedRange<Double> = 0...0.5
+    /// Illustrator's tracking range, in 1/1000 em.
+    static let trackingRange: ClosedRange<Double> = -1000...10000
+
+    /// Illustrator's kerning methods that Core Text can reproduce. Optical
+    /// kerning has no Core Text equivalent, so it is not offered.
+    enum Kerning: String, Codable, CaseIterable, Identifiable, Sendable {
+        /// The font's own kerning pairs (Illustrator's Auto, or メトリクス).
+        case auto
+        /// The font's kerning for Latin text only; Japanese text is set solid.
+        case romanOnly
+        /// No kerning.
+        case none
+
+        var id: String { rawValue }
+
+        var title: String {
+            switch self {
+            case .auto: String(localized: "Auto")
+            case .romanOnly: String(localized: "Metrics – Roman Only")
+            case .none: "0"
+            }
+        }
+    }
 
     /// Explicit feature states by tag. A feature that is not listed keeps the
     /// font's own default, so only the user's changes are stored.
     var features: [String: Bool]
     /// Extra space between Japanese and Latin letters or figures, in em.
     var japaneseLatinSpacing: Double
+    var kerning: Kerning
+    /// Space added after every character, in 1/1000 em like Illustrator.
+    var tracking: Double
+    /// How much of each glyph's side bearings is removed, 0–1 (文字ツメ).
+    var tsume: Double
 
-    init(features: [String: Bool] = [:], japaneseLatinSpacing: Double = 0) {
+    init(
+        features: [String: Bool] = [:],
+        japaneseLatinSpacing: Double = 0,
+        kerning: Kerning = .auto,
+        tracking: Double = 0,
+        tsume: Double = 0
+    ) {
         self.features = features
         self.japaneseLatinSpacing = japaneseLatinSpacing
+        self.kerning = kerning
+        self.tracking = tracking
+        self.tsume = tsume
     }
 
     private enum CodingKeys: String, CodingKey {
-        case features, japaneseLatinSpacing
+        case features, japaneseLatinSpacing, kerning, tracking, tsume
     }
 
     init(from decoder: Decoder) throws {
@@ -103,6 +141,30 @@ nonisolated struct TypesettingOptions: Codable, Hashable, Sendable {
         features = (try? container.decodeIfPresent([String: Bool].self, forKey: .features)) ?? [:]
         let spacing = (try? container.decodeIfPresent(Double.self, forKey: .japaneseLatinSpacing)) ?? 0
         japaneseLatinSpacing = min(max(spacing, Self.spacingRange.lowerBound), Self.spacingRange.upperBound)
+        kerning = (try? container.decodeIfPresent(Kerning.self, forKey: .kerning)) ?? .auto
+        let tracking = (try? container.decodeIfPresent(Double.self, forKey: .tracking)) ?? 0
+        self.tracking = min(max(tracking, Self.trackingRange.lowerBound), Self.trackingRange.upperBound)
+        let tsume = (try? container.decodeIfPresent(Double.self, forKey: .tsume)) ?? 0
+        self.tsume = min(max(tsume, 0), 1)
+    }
+
+    /// The feature settings for the faces drawing one part of a mix: the
+    /// kerning method switches `kern` off everywhere, or only for Japanese.
+    func features(for script: MixedScript) -> [String: Bool] {
+        var result = features
+        switch kerning {
+        case .auto: break
+        case .romanOnly where script == .japanese: result["kern"] = false
+        case .romanOnly: break
+        case .none: result["kern"] = false
+        }
+        return result
+    }
+
+    /// Whether anything adds space between characters beyond the fonts' own
+    /// advances.
+    var adjustsSpacing: Bool {
+        japaneseLatinSpacing != 0 || tracking != 0 || tsume != 0
     }
 
     func isOn(_ feature: OpenTypeFeature) -> Bool {
@@ -211,6 +273,120 @@ nonisolated enum JapaneseLatinSpacing {
     }
 }
 
+/// Illustrator-style character spacing: tracking after every character, tsume
+/// trimming each glyph's side bearings, and the Japanese–Latin space, all
+/// expressed as kerning after each character.
+nonisolated enum CharacterSpacing {
+    /// The kerning after each character, by UTF-16 range. `font` returns the
+    /// font drawing a character; tsume needs its glyph's side bearings.
+    static func kerns(
+        in string: String,
+        size: CGFloat,
+        options: TypesettingOptions,
+        font: (Character) -> CTFont?
+    ) -> [(range: NSRange, kern: CGFloat)] {
+        guard options.adjustsSpacing else { return [] }
+        let tracking = size * CGFloat(options.tracking) / 1000
+        let japaneseLatin = size * CGFloat(options.japaneseLatinSpacing)
+        let tsume = CGFloat(options.tsume)
+        var bearings: [String: (left: CGFloat, right: CGFloat)] = [:]
+
+        func sideBearings(of character: Character) -> (left: CGFloat, right: CGFloat) {
+            guard tsume != 0, let ctFont = font(character) else { return (0, 0) }
+            let key = "\(CTFontCopyPostScriptName(ctFont))|\(CTFontGetSize(ctFont))|\(character)"
+            if let cached = bearings[key] { return cached }
+            let utf16 = Array(String(character).utf16)
+            var glyphs = [CGGlyph](repeating: 0, count: utf16.count)
+            var result: (CGFloat, CGFloat) = (0, 0)
+            if CTFontGetGlyphsForCharacters(ctFont, utf16, &glyphs, utf16.count), glyphs[0] != 0 {
+                var glyph = glyphs[0]
+                let advance = CTFontGetAdvancesForGlyphs(ctFont, .horizontal, &glyph, nil, 1)
+                let bounds = CTFontGetBoundingRectsForGlyphs(ctFont, .horizontal, &glyph, nil, 1)
+                // Spaces have no outline; their whole advance is not a bearing.
+                if !bounds.isEmpty {
+                    result = (max(0, bounds.minX), max(0, advance - bounds.maxX))
+                }
+            }
+            bearings[key] = result
+            return result
+        }
+
+        func advance(of character: Character) -> CGFloat? {
+            guard let ctFont = font(character) else { return nil }
+            let utf16 = Array(String(character).utf16)
+            var glyphs = [CGGlyph](repeating: 0, count: utf16.count)
+            guard CTFontGetGlyphsForCharacters(ctFont, utf16, &glyphs, utf16.count) else { return nil }
+            return CTFontGetAdvancesForGlyphs(ctFont, .horizontal, &glyphs, nil, 1)
+        }
+
+        var kerns: [(range: NSRange, kern: CGFloat)] = []
+        let characters = Array(string)
+        var location = 0
+        for (index, character) in characters.enumerated() {
+            let length = character.utf16.count
+            var kern = tracking
+            if index + 1 < characters.count {
+                let next = characters[index + 1]
+                if japaneseLatin != 0, JapaneseLatinSpacing.isBoundary(character, next) {
+                    kern += japaneseLatin
+                } else if japaneseLatin != 0, character == " ", index > 0,
+                          JapaneseLatinSpacing.isBoundary(characters[index - 1], next),
+                          let spaceWidth = advance(of: character) {
+                    // A space typed at the boundary takes the chosen width,
+                    // so the setting also reads in text spaced by hand.
+                    kern += japaneseLatin - spaceWidth
+                }
+                if tsume != 0 {
+                    kern -= tsume * (sideBearings(of: character).right + sideBearings(of: next).left)
+                }
+            }
+            if kern != 0 {
+                kerns.append((NSRange(location: location, length: length), kern))
+            }
+            location += length
+        }
+        return kerns
+    }
+
+    /// Applies the kerning to an AppKit string, leaving IME marked text alone.
+    static func apply(
+        to storage: NSMutableAttributedString,
+        size: CGFloat,
+        options: TypesettingOptions,
+        skipping marked: NSRange = NSRange(location: NSNotFound, length: 0),
+        font: (Character) -> CTFont?
+    ) {
+        for entry in kerns(in: storage.string, size: size, options: options, font: font) {
+            if marked.location != NSNotFound, NSIntersectionRange(entry.range, marked).length > 0 { continue }
+            storage.addAttribute(.kern, value: entry.kern, range: entry.range)
+        }
+    }
+
+    /// Applies the kerning to a SwiftUI string.
+    static func apply(
+        to attributed: inout AttributedString,
+        size: CGFloat,
+        options: TypesettingOptions,
+        font: (Character) -> CTFont?
+    ) {
+        let kerns = kerns(in: String(attributed.characters), size: size, options: options, font: font)
+        guard !kerns.isEmpty else { return }
+        var byLocation: [Int: CGFloat] = [:]
+        for entry in kerns { byLocation[entry.range.location] = entry.kern }
+        var index = attributed.startIndex
+        var location = 0
+        while index < attributed.endIndex {
+            let next = attributed.characters.index(after: index)
+            let character = attributed.characters[index]
+            if let kern = byLocation[location] {
+                attributed[index..<next].swiftUI.kern = kern
+            }
+            location += character.utf16.count
+            index = next
+        }
+    }
+}
+
 /// Reads which OpenType features a face carries from its `GSUB` and `GPOS`
 /// feature lists, plus `kern` for a legacy `kern` table. Results are cached
 /// per face for the session.
@@ -274,7 +450,7 @@ struct OpenTypeFeatureList: View {
 
     var body: some View {
         if features.isEmpty {
-            Text("This style has no OpenType features to switch.")
+            Text(String(localized: "This style has no OpenType features to switch."))
                 .font(.callout)
                 .foregroundStyle(.secondary)
         } else {
@@ -317,11 +493,21 @@ struct OpenTypeFeatureList: View {
 struct OpenTypeFeatureMenu: View {
     let features: [OpenTypeFeature]
     @Binding var options: TypesettingOptions
+    /// Features another control already owns, such as `kern` under Kerning.
+    var excluding: Set<String> = []
+
+    private var listed: [OpenTypeFeature] {
+        features.filter { !excluding.contains($0.tag) }
+    }
+
+    private var changedCount: Int {
+        options.features.keys.filter { !excluding.contains($0) }.count
+    }
 
     var body: some View {
         Menu {
             ForEach(OpenTypeFeature.Group.allCases, id: \.self) { group in
-                let items = features.filter { $0.group == group }
+                let items = listed.filter { $0.group == group }
                 if !items.isEmpty {
                     Section(group.title) {
                         ForEach(items) { feature in
@@ -333,18 +519,20 @@ struct OpenTypeFeatureMenu: View {
                     }
                 }
             }
-            if options.changedFeatureCount > 0 {
+            if changedCount > 0 {
                 Divider()
-                Button("Reset Features") { options.features = [:] }
+                Button(String(localized: "Reset Features")) {
+                    options.features = options.features.filter { excluding.contains($0.key) }
+                }
             }
         } label: {
-            Text(options.changedFeatureCount > 0
-                ? "OpenType Features (\(options.changedFeatureCount) changed)"
-                : "OpenType Features")
+            Text(changedCount > 0
+                ? String(localized: "OpenType Features (\(changedCount) changed)")
+                : String(localized: "OpenType Features"))
         }
-        .disabled(features.isEmpty)
-        .help(features.isEmpty
-            ? "These fonts have no OpenType features to switch"
-            : "Switch OpenType features of the pair's fonts")
+        .disabled(listed.isEmpty)
+        .help(listed.isEmpty
+            ? String(localized: "These fonts have no OpenType features to switch")
+            : String(localized: "Switch OpenType features of the pair's fonts"))
     }
 }

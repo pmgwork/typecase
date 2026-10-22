@@ -64,7 +64,7 @@ struct MixedPairRow: View, Equatable {
                 if !isResolvable {
                     Image(systemName: "exclamationmark.triangle")
                         .foregroundStyle(.secondary)
-                        .help("One of the fonts is no longer in the library")
+                        .help(String(localized: "One of the fonts is no longer in the library"))
                 }
             }
             // Single-line like the font rows, so row heights stay constant.
@@ -73,7 +73,7 @@ struct MixedPairRow: View, Equatable {
                 size: previewSize,
                 lines: 1,
                 fonts: fonts,
-                japaneseLatinSpacing: pair.options.japaneseLatinSpacing,
+                typesetting: pair.options,
                 textColor: previewTextColor
             )
         }
@@ -101,7 +101,7 @@ struct MixedPairRow: View, Equatable {
     private var styleLabel: String {
         let styles = [MixedScript.japanese, .latin].compactMap { faces[$0]?.styleName }
             .filter { !$0.isEmpty }
-        return styles.isEmpty ? "\(pair.references.count) fonts" : styles.joined(separator: " · ")
+        return styles.isEmpty ? String(localized: "\(pair.references.count) fonts") : styles.joined(separator: " · ")
     }
 
     /// A pair is named by its two required fonts.
@@ -115,7 +115,7 @@ struct MixedPairRow: View, Equatable {
                 postScriptName: entry.reference.postScriptName,
                 fileURL: faces[entry.script]?.fileURL,
                 variations: variations[entry.reference.postScriptName],
-                features: pair.options.features
+                features: pair.options.features(for: entry.script)
             )
         }
     }

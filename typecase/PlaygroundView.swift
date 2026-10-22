@@ -34,28 +34,28 @@ struct PlaygroundView: View {
             .onAppear(perform: setStarterFont)
             .onChange(of: catalog.familiesRevision) { _, _ in setStarterFont() }
             .onChange(of: playground.currentLayoutID) { _, _ in setStarterFont() }
-            .alert("Rename Layout", isPresented: $isRenaming) {
-                TextField("Name", text: $renameText)
-                Button("Rename") { playground.renameCurrentLayout(to: renameText) }
+            .alert(String(localized: "Rename Layout"), isPresented: $isRenaming) {
+                TextField(String(localized: "Name"), text: $renameText)
+                Button(String(localized: "Rename")) { playground.renameCurrentLayout(to: renameText) }
                     .keyboardShortcut(.defaultAction)
-                Button("Cancel", role: .cancel) {}
+                Button(String(localized: "Cancel"), role: .cancel) {}
             } message: {
-                Text("The name appears in the layout menu.")
+                Text(String(localized: "The name appears in the layout menu."))
             }
             .confirmationDialog(
-                "Delete “\(layout.name)”?",
+                String(localized: "Delete “\(layout.name)”?"),
                 isPresented: $isConfirmingDelete,
                 titleVisibility: .visible
             ) {
-                Button("Delete Layout", role: .destructive) { playground.deleteCurrentLayout() }
-                Button("Cancel", role: .cancel) {}
+                Button(String(localized: "Delete Layout"), role: .destructive) { playground.deleteCurrentLayout() }
+                Button(String(localized: "Cancel"), role: .cancel) {}
             } message: {
-                Text("The layout’s blocks are removed.")
+                Text(String(localized: "The layout’s blocks are removed."))
             }
-            .alert("Could Not Copy Image", isPresented: $copyFailed) {
-                Button("OK", role: .cancel) {}
+            .alert(String(localized: "Could Not Copy Image"), isPresented: $copyFailed) {
+                Button(String(localized: "OK"), role: .cancel) {}
             } message: {
-                Text("The layout could not be rendered as an image. Try again.")
+                Text(String(localized: "The layout could not be rendered as an image. Try again."))
             }
     }
 
@@ -77,28 +77,28 @@ struct PlaygroundView: View {
                     }
                 }
             } label: {
-                Label("Add Block", systemImage: "plus")
+                Label(String(localized: "Add Block"), systemImage: "plus")
             }
-            .help("Add a heading or paragraph after the selected block")
+            .help(String(localized: "Add a heading or paragraph after the selected block"))
         }
         ToolbarItem(placement: .confirmationAction) {
             Button {
                 copyImage()
             } label: {
-                Label(copiedImage ? "Copied" : "Copy as Image",
+                Label(copiedImage ? String(localized: "Copied") : String(localized: "Copy as Image"),
                       systemImage: copiedImage ? "checkmark" : "doc.on.clipboard")
             }
             .keyboardShortcut("c", modifiers: [.command, .option])
-            .help(copiedImage ? "Image copied to clipboard" : "Copy the layout to the clipboard as an image (⌥⌘C)")
+            .help(copiedImage ? String(localized: "Image copied to clipboard") : String(localized: "Copy the layout to the clipboard as an image (⌥⌘C)"))
         }
         ToolbarItem(placement: .confirmationAction) {
             Button {
                 inspectorVisible.toggle()
             } label: {
-                Label("Inspector", systemImage: "info.circle")
+                Label(String(localized: "Inspector"), systemImage: "info.circle")
             }
             .keyboardShortcut("i", modifiers: [.command, .option])
-            .help("Show or hide the block settings (⌥⌘I)")
+            .help(String(localized: "Show or hide the block settings (⌥⌘I)"))
         }
     }
 
@@ -118,20 +118,20 @@ struct PlaygroundView: View {
                 }
             }
             Divider()
-            Button("New Layout") { playground.addLayout() }
-            Button("Duplicate") { playground.duplicateCurrentLayout() }
-            Button("Rename…") {
+            Button(String(localized: "New Layout")) { playground.addLayout() }
+            Button(String(localized: "Duplicate")) { playground.duplicateCurrentLayout() }
+            Button(String(localized: "Rename…")) {
                 renameText = playground.currentLayout.name
                 isRenaming = true
             }
             Divider()
-            Button("Delete Layout", role: .destructive) { isConfirmingDelete = true }
+            Button(String(localized: "Delete Layout"), role: .destructive) { isConfirmingDelete = true }
                 .disabled(playground.layouts.count <= 1)
         } label: {
             Label(playground.currentLayout.name, systemImage: "rectangle.3.group")
         }
         .fixedSize()
-        .help("Choose a layout, or create, rename, duplicate, or delete one")
+        .help(String(localized: "Choose a layout, or create, rename, duplicate, or delete one"))
     }
 
     /// Puts the layout on the pasteboard as an image, drawn at a fixed measure
@@ -248,7 +248,7 @@ private struct PlaygroundCanvas: View {
                     }
                 })
                 .contextMenu {
-                    Menu("Element") {
+                    Menu(String(localized: "Element")) {
                         ForEach(PlaygroundBlockRole.allCases) { role in
                             Button("\(role.title) · \(role.description)") {
                                 var updated = playground.block(id: block.id) ?? block
@@ -259,13 +259,13 @@ private struct PlaygroundCanvas: View {
                         }
                     }
                     Divider()
-                    Button("Duplicate Block") { playground.duplicateBlock(block.id) }
-                    Button("Move Up") { playground.moveBlock(block.id, by: -1) }
+                    Button(String(localized: "Duplicate Block")) { playground.duplicateBlock(block.id) }
+                    Button(String(localized: "Move Up")) { playground.moveBlock(block.id, by: -1) }
                         .disabled(layout.blocks.first?.id == block.id)
-                    Button("Move Down") { playground.moveBlock(block.id, by: 1) }
+                    Button(String(localized: "Move Down")) { playground.moveBlock(block.id, by: 1) }
                         .disabled(layout.blocks.last?.id == block.id)
                     Divider()
-                    Button("Delete Block", role: .destructive) { playground.removeBlock(block.id) }
+                    Button(String(localized: "Delete Block"), role: .destructive) { playground.removeBlock(block.id) }
                 }
             }
             .onMove { playground.moveBlocks(from: $0, to: $1) }
@@ -291,11 +291,11 @@ private struct PlaygroundCanvas: View {
 
     private var emptyState: some View {
         ContentUnavailableView {
-            Label("Empty Layout", systemImage: "character.textbox")
+            Label(String(localized: "Empty Layout"), systemImage: "character.textbox")
         } description: {
-            Text("Add a block, then set it in any font in your library.")
+            Text(String(localized: "Add a block, then set it in any font in your library."))
         } actions: {
-            Button("Add Block") { playground.addBlock() }
+            Button(String(localized: "Add Block")) { playground.addBlock() }
         }
     }
 
@@ -401,7 +401,7 @@ private struct PlaygroundBlockRow: View {
         .padding(.vertical, 4)
         .padding(.horizontal, 12)
         .contentShape(.rect)
-        .help("\(block.role.title) · \(helpText) · Click to edit text; press Esc, then Delete, to remove the block")
+        .help(String(localized: "\(block.role.title) · \(helpText) · Click to edit text; press Esc, then Delete, to remove the block"))
     }
 
     private var textBinding: Binding<String> {
@@ -428,7 +428,7 @@ private struct PlaygroundBlockRow: View {
     }
 
     private var helpText: String {
-        guard let family = resolved.family else { return "System Font" }
+        guard let family = resolved.family else { return String(localized: "System Font") }
         guard let style = resolved.face?.styleName, !style.isEmpty else { return family.name }
         return "\(family.name) · \(style)"
     }
@@ -447,8 +447,8 @@ private struct PlaygroundBlockInspector: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
                     blockHeader(block)
-                    field("Element") {
-                        Picker("Element", selection: roleBinding(block)) {
+                    field(String(localized: "Element")) {
+                        Picker(String(localized: "Element"), selection: roleBinding(block)) {
                             ForEach(PlaygroundBlockRole.allCases) { role in
                                 Text("\(role.title) · \(role.description)").tag(role)
                             }
@@ -475,7 +475,7 @@ private struct PlaygroundBlockInspector: View {
                 missingCharacters = missing
             }
         } else {
-            ContentUnavailableView("Select a block", systemImage: "character.textbox")
+            ContentUnavailableView(String(localized: "Select a block"), systemImage: "character.textbox")
         }
     }
 
@@ -483,49 +483,49 @@ private struct PlaygroundBlockInspector: View {
 
     private func blockHeader(_ block: PlaygroundBlock) -> some View {
         HStack(spacing: 8) {
-            Text("Block")
+            Text(String(localized: "Block"))
                 .font(.headline)
             Spacer(minLength: 8)
             Menu {
-                Button("Duplicate Block") { playground.duplicateBlock(block.id) }
-                Button("Move Up") { playground.moveBlock(block.id, by: -1) }
+                Button(String(localized: "Duplicate Block")) { playground.duplicateBlock(block.id) }
+                Button(String(localized: "Move Up")) { playground.moveBlock(block.id, by: -1) }
                     .disabled(playground.currentLayout.blocks.first?.id == block.id)
-                Button("Move Down") { playground.moveBlock(block.id, by: 1) }
+                Button(String(localized: "Move Down")) { playground.moveBlock(block.id, by: 1) }
                     .disabled(playground.currentLayout.blocks.last?.id == block.id)
                 Divider()
-                Menu("Sample Text") {
+                Menu(String(localized: "Sample Text")) {
                     ForEach(FontLanguage.allCases) { language in
                         Button(language.title) {
                             update(block) { $0.text = settings.sample(for: language) }
                         }
                     }
                     Divider()
-                    Button("Clear Text") { update(block) { $0.text = "" } }
+                    Button(String(localized: "Clear Text")) { update(block) { $0.text = "" } }
                 }
                 Divider()
-                Button("Delete Block", role: .destructive) { playground.removeBlock(block.id) }
+                Button(String(localized: "Delete Block"), role: .destructive) { playground.removeBlock(block.id) }
             } label: {
-                Label("Block Actions", systemImage: "ellipsis.circle")
+                Label(String(localized: "Block Actions"), systemImage: "ellipsis.circle")
                     .labelStyle(.iconOnly)
             }
             .menuStyle(.button)
             .buttonStyle(.borderless)
             .menuIndicator(.hidden)
             .fixedSize()
-            .help("Duplicate, reorder, choose sample text, or delete this block")
+            .help(String(localized: "Duplicate, reorder, choose sample text, or delete this block"))
         }
     }
 
     private func fontSection(_ block: PlaygroundBlock) -> some View {
         let family = block.familyID.flatMap { catalog.familyByID[$0] }
         return VStack(alignment: .leading, spacing: 14) {
-            field("Font") {
-                Picker("Font", selection: familyBinding(block)) {
-                    Text("System Font").tag(String?.none)
+            field(String(localized: "Font")) {
+                Picker(String(localized: "Font"), selection: familyBinding(block)) {
+                    Text(String(localized: "System Font")).tag(String?.none)
                     // A font the library no longer carries keeps its block
                     // readable instead of leaving the picker blank.
                     if let familyID = block.familyID, family == nil {
-                        Text("Missing Font").tag(Optional(familyID))
+                        Text(String(localized: "Missing Font")).tag(Optional(familyID))
                     }
                     ForEach(catalog.families) { item in
                         Text(item.name).tag(Optional(item.id))
@@ -533,8 +533,8 @@ private struct PlaygroundBlockInspector: View {
                 }
                 .labelsHidden()
             }
-            field("Style") {
-                Picker("Style", selection: faceBinding(block)) {
+            field(String(localized: "Style")) {
+                Picker(String(localized: "Style"), selection: faceBinding(block)) {
                     if let family {
                         ForEach(family.faces) { face in
                             Text(face.styleName).tag(Optional(face.id))
@@ -552,20 +552,20 @@ private struct PlaygroundBlockInspector: View {
     private func typographySection(_ block: PlaygroundBlock) -> some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 8) {
-                Text("Typography")
+                Text(String(localized: "Typography"))
                     .font(.headline)
                 Spacer(minLength: 8)
                 // Only offered once the values have left the role's scale.
                 if !block.usesRoleTypography {
-                    Button("Reset to \(block.role.title)") {
+                    Button(String(localized: "Reset to \(block.role.title)")) {
                         update(block) { $0.resetTypographyToRole() }
                     }
                     .buttonStyle(.link)
-                    .help("Return size, line height, and tracking to the \(block.role.description) defaults")
+                    .help(String(localized: "Return size, line height, and tracking to the \(block.role.description) defaults"))
                 }
             }
             slider(
-                "Size",
+                String(localized: "Size"),
                 value: numberBinding(block, \.size),
                 range: PlaygroundMetrics.sizeRange,
                 step: 1,
@@ -573,7 +573,7 @@ private struct PlaygroundBlockInspector: View {
                 unit: "pt"
             )
             slider(
-                "Line Height",
+                String(localized: "Line Height"),
                 value: numberBinding(block, \.lineHeight),
                 range: PlaygroundMetrics.lineHeightRange,
                 step: 0.05,
@@ -581,7 +581,7 @@ private struct PlaygroundBlockInspector: View {
                 unit: "×"
             )
             slider(
-                "Tracking",
+                String(localized: "Tracking"),
                 value: numberBinding(block, \.tracking),
                 range: PlaygroundMetrics.trackingRange,
                 step: 0.1,
@@ -589,16 +589,16 @@ private struct PlaygroundBlockInspector: View {
                 unit: "pt"
             )
             slider(
-                "Japanese–Latin Space",
+                String(localized: "Japanese–Latin Space"),
                 value: spacingPercentBinding(block),
                 range: 0...(TypesettingOptions.spacingRange.upperBound * 100),
                 step: 1,
                 fractionDigits: 0,
                 unit: "%"
             )
-            .help("Space added between Japanese and Latin letters or figures, as a percentage of the font size (和欧間のアキ)")
-            field("Alignment") {
-                Picker("Alignment", selection: alignmentBinding(block)) {
+            .help(String(localized: "Space added between Japanese and Latin letters or figures, as a percentage of the font size (和欧間のアキ)"))
+            field(String(localized: "Alignment")) {
+                Picker(String(localized: "Alignment"), selection: alignmentBinding(block)) {
                     ForEach(PlaygroundAlignment.allCases) { alignment in
                         Label(alignment.title, systemImage: alignment.symbol)
                             .labelStyle(.iconOnly)
@@ -616,13 +616,13 @@ private struct PlaygroundBlockInspector: View {
     private func featureSection(_ block: PlaygroundBlock, features: [OpenTypeFeature]) -> some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 8) {
-                Text("OpenType Features")
+                Text(String(localized: "OpenType Features"))
                     .font(.headline)
                 Spacer(minLength: 8)
                 if block.typesetting.changedFeatureCount > 0 {
-                    Button("Reset") { update(block) { $0.typesetting.features = [:] } }
+                    Button(String(localized: "Reset")) { update(block) { $0.typesetting.features = [:] } }
                         .buttonStyle(.link)
-                        .help("Return every feature to the font's default")
+                        .help(String(localized: "Return every feature to the font's default"))
                 }
             }
             OpenTypeFeatureList(features: features, options: typesettingBinding(block))
@@ -639,15 +639,15 @@ private struct PlaygroundBlockInspector: View {
         let list = visible.joined(separator: " ")
         return Label {
             Text(remaining > 0
-                ? "Missing characters: \(list) … (+\(remaining))"
-                : "Missing characters: \(list)")
+                ? String(localized: "Missing characters: \(list) … (+\(remaining))")
+                : String(localized: "Missing characters: \(list)"))
         } icon: {
             Image(systemName: "exclamationmark.triangle")
         }
         .font(.callout)
         .foregroundStyle(.secondary)
         .textSelection(.enabled)
-        .help("The selected style cannot display these characters")
+        .help(String(localized: "The selected style cannot display these characters"))
     }
 
     private func missingCharactersKey(block: PlaygroundBlock, resolved: PlaygroundResolvedBlock) -> String {

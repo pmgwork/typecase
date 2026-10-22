@@ -42,6 +42,7 @@ final class FontCatalog: ObservableObject {
     private var sourceCounts: [FontSource: Int] = [:]
     private var scopeCounts: [SystemFontScope: Int] = [:]
     private var folderCounts: [URL: Int] = [:]
+    private var folderActivationFiles: [URL: [FontActivationState]] = [:]
     private var tagCounts: [String: Int] = [:]
     private(set) var taggedFamilyIDs: [String: Set<FontFamily.ID>] = [:]
     /// The faces of each family that more than one font file provides, in
@@ -121,13 +122,17 @@ final class FontCatalog: ObservableObject {
     }
 
     func toggleFavorite(_ family: FontFamily) {
-        if favorites.contains(family.id) {
-            favorites.remove(family.id)
-            if familyIDs.contains(family.id) { favoriteCount -= 1 }
-        } else {
-            favorites.insert(family.id)
-            if familyIDs.contains(family.id) { favoriteCount += 1 }
-        }
+        setFavorite(!isFavorite(family), families: [family])
+    }
+
+    /// Apply one state to the selection, persisting and invalidating the list
+    /// once even when hundreds of families are selected.
+    func setFavorite(_ enabled: Bool, families: [FontFamily]) {
+        let ids = Set(families.map(\.id))
+        let updated = enabled ? favorites.union(ids) : favorites.subtracting(ids)
+        guard updated != favorites else { return }
+        favorites = updated
+        favoriteCount = favorites.intersection(familyIDs).count
         defaults.set(Array(favorites), forKey: "favoriteFamilies")
         dataRevision += 1
     }
@@ -529,6 +534,13 @@ final class FontCatalog: ObservableObject {
         return family.faces.first { $0.postScriptName == reference.postScriptName } ?? family.previewFace
     }
 
+    /// Only services represented by fonts in the catalog get navigation rows.
+    var hasCompletedInitialScan: Bool { hasLoadedOnce }
+
+    var availableProviders: [FontProvider] {
+        FontProviderRegistry.all.filter { fontCount(for: .section(.provider($0))) > 0 }
+    }
+
     /// Returns the unfiltered family count represented by a sidebar destination.
     /// The sidebar requests this only for its selected row.
     func fontCount(for selection: LibrarySelection) -> Int {
@@ -564,8 +576,8 @@ final class FontCatalog: ObservableObject {
 
     func addFolder(onAdded: ((URL) -> Void)? = nil) {
         let panel = NSOpenPanel()
-        panel.title = "Choose a font folder"
-        panel.prompt = "Add Folder"
+        panel.title = String(localized: "Choose a font folder")
+        panel.prompt = String(localized: "Add Folder")
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
         panel.allowsMultipleSelection = true
@@ -903,6 +915,20 @@ final class FontCatalog: ObservableObject {
         applyActivation(states, undoManager: undoManager)
     }
 
+    /// Uses file paths rather than family membership: a family's other styles
+    /// may live outside this folder. Descendants and collection files count once.
+    func activationStates(in folder: URL) -> [FontActivationState] {
+        folderActivationFiles[folder.standardizedFileURL] ?? []
+    }
+
+    func setEnabled(_ enabled: Bool, in folder: URL, undoManager: UndoManager? = nil) {
+        guard !isUpdatingActivation else { return }
+        let states = activationStates(in: folder)
+            .filter { $0.enabled != enabled }
+            .map { FontActivationState(url: $0.url, names: $0.names, enabled: enabled) }
+        applyActivation(states, undoManager: undoManager)
+    }
+
     /// Toggles the file shared by the given faces. Core Text registers and
     /// unregisters whole font files, so a style toggles together with every
     /// face that shares its file — the members of a collection, for example.
@@ -1071,9 +1097,9 @@ final class FontCatalog: ObservableObject {
     }
 
     private static func activationActionName(for states: [FontActivationState]) -> String {
-        if states.allSatisfy(\.enabled) { return "Activate Fonts" }
-        if states.allSatisfy({ !$0.enabled }) { return "Deactivate Fonts" }
-        return "Change Font Activation"
+        if states.allSatisfy(\.enabled) { return String(localized: "Activate Fonts") }
+        if states.allSatisfy({ !$0.enabled }) { return String(localized: "Deactivate Fonts") }
+        return String(localized: "Change Font Activation")
     }
 
     // MARK: - Character coverage
@@ -1103,7 +1129,6 @@ final class FontCatalog: ObservableObject {
         )
     }
 
-    /// The preview face's variable axes, or nil for a static font.
     /// The face's drawable characters grouped for the glyph browser. Reading
     /// and grouping a CJK font's tens of thousands of code points stays off
     /// the main actor.
@@ -1117,6 +1142,7 @@ final class FontCatalog: ObservableObject {
         }.value
     }
 
+    /// The preview face's variable axes, or nil for a static font.
     func variableInfo(for family: FontFamily, size: CGFloat) async -> VariableFontInfo? {
         guard let face = family.previewFace else { return nil }
         return await Task.detached(priority: .userInitiated) {
@@ -1212,6 +1238,12 @@ final class FontCatalog: ObservableObject {
                 familyByID[family.id] = family
             }
         }
+        // Activation updates families without rebuilding the full library indexes.
+        // Refresh the folder cache too, including ancestors, so indicators and
+        // the next toggle use the completed operation's state.
+        folderActivationFiles = Self.folderActivationIndex(
+            activationStates(for: families), roots: folders.map(\.standardizedFileURL)
+        )
     }
 
     nonisolated private static func familyID(for name: String) -> String {
@@ -1265,6 +1297,10 @@ final class FontCatalog: ObservableObject {
             }
         }
 
+        // Cache per-folder file states once per catalog revision, keeping the
+        // sidebar inexpensive even with a large expanded directory tree.
+        folderActivationFiles = Self.folderActivationIndex(activationStates(for: families), roots: roots)
+
         familyByID = byID
         familyIDs = Set(byID.keys)
         favoriteCount = favorites.intersection(familyIDs).count
@@ -1276,6 +1312,19 @@ final class FontCatalog: ObservableObject {
         folderCounts = folderTotals
         duplicatesByFamily = duplicates
         rebuildTagCounts()
+    }
+
+    nonisolated static func folderActivationIndex(
+        _ states: [FontActivationState], roots: [URL]
+    ) -> [URL: [FontActivationState]] {
+        var index: [URL: [FontActivationState]] = [:]
+        var seen: Set<URL> = []
+        for state in states where seen.insert(state.url.standardizedFileURL).inserted {
+            for folder in ancestors(of: state.url, within: roots) {
+                index[folder, default: []].append(state)
+            }
+        }
+        return index
     }
 
     /// The files of every PostScript name that more than one file provides.
@@ -1328,7 +1377,7 @@ final class FontCatalog: ObservableObject {
     /// Every directory between a font file and the outermost added folder that
     /// contains it. Folder sections match against this set instead of resolving
     /// paths while filtering.
-    private static func ancestors(of url: URL, within roots: [URL]) -> Set<URL> {
+    nonisolated private static func ancestors(of url: URL, within roots: [URL]) -> Set<URL> {
         let file = url.standardizedFileURL
         let components = file.pathComponents
 
