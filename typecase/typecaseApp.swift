@@ -9,6 +9,7 @@ import SwiftUI
 
 @main
 struct typecaseApp: App {
+    @StateObject private var updater = AppUpdater()
     @StateObject private var catalog = FontCatalog()
     @StateObject private var settings = AppSettings()
     @StateObject private var playground = PlaygroundStore()
@@ -26,6 +27,12 @@ struct typecaseApp: App {
         .defaultSize(width: 1280, height: 760)
         .windowResizability(.contentMinSize)
         .commands {
+            CommandGroup(after: .appInfo) {
+                Button(String(localized: "Check for Updates…")) {
+                    updater.checkForUpdates()
+                }
+                .disabled(!updater.canCheckForUpdates)
+            }
             CommandGroup(after: .newItem) {
                 AddFontFolderCommand(catalog: catalog, settings: settings)
 
