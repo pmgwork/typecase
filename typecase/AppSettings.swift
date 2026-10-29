@@ -97,6 +97,8 @@ final class AppSettings: ObservableObject {
         variableAxes = (defaults.dictionary(forKey: Key.variableAxes) as? [String: [String: Double]]) ?? [:]
         lastSelection = defaults.stringArray(forKey: Key.lastSelection) ?? []
         lastLocation = defaults.string(forKey: Key.lastLocation) ?? ""
+        // The removed PlayGround stored its pages here.
+        Key.removedPlayground.forEach(defaults.removeObject(forKey:))
     }
 
     // MARK: - Preview
@@ -322,6 +324,7 @@ final class AppSettings: ObservableObject {
         /// Keys used before the sample texts became per-language.
         static let legacyJapaneseSample = "japaneseSampleText"
         static let legacyLatinSample = "latinSampleText"
+        static let removedPlayground = ["playgroundLayouts", "playgroundCurrentLayout", "playgroundTypeScaleApplied"]
         static let previewBackgroundColor = "previewBackgroundColor"
         static let previewTextColor = "previewTextColor"
         static let favoritesFirst = "favoritesFirst"

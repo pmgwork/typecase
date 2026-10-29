@@ -17,19 +17,11 @@ struct DuplicateCleanupTests {
         precondition(DuplicateCleanupPolicy.canRemove([collection.url], from: files), "Unique faces may be removed explicitly")
         precondition(DuplicateCleanupPolicy.missingNames(afterRemoving: [collection.url], from: files) == ["UniqueBold"])
         precondition(DuplicateCleanupPolicy.missingNames(afterRemoving: [old.url, third.url], from: files).isEmpty)
-        precondition(!DuplicateCleanupPolicy.suggestedSelection(in: files, limitedTo: Set(files.map(\.url))).contains(collection.url))
         precondition(!DuplicateCleanupPolicy.canRemove([], from: files))
         precondition(!DuplicateCleanupPolicy.canRemove([URL(fileURLWithPath: "/unknown.ttf")], from: files))
         let inactive = [file("a.ttf", ["Regular"]), file("b.ttf", ["Regular"])]
-        let suggested = DuplicateCleanupPolicy.suggestedSelection(in: inactive, limitedTo: Set(inactive.map(\.url)))
-        precondition(suggested.count == 1 && DuplicateCleanupPolicy.canRemove(suggested, from: inactive))
         precondition(DuplicateCleanupPolicy.canRemove(Set(inactive.map(\.url)), from: inactive), "Every copy may be selected explicitly")
         precondition(DuplicateCleanupPolicy.missingNames(afterRemoving: Set(inactive.map(\.url)), from: inactive) == ["Regular"])
-        let overlapping = [file("a.ttc", ["Regular", "Bold"]), file("b.ttf", ["Regular"]), file("c.ttf", ["Bold"])]
-        let proposed = DuplicateCleanupPolicy.suggestedSelection(in: overlapping, limitedTo: Set(overlapping.map(\.url)))
-        precondition(DuplicateCleanupPolicy.canRemove(proposed, from: overlapping))
-        precondition(proposed == [overlapping[0].url], "Do not also select a retained collection's replacement files")
-        precondition(DuplicateCleanupPolicy.suggestedSelection(in: files, limitedTo: [old.url]) == [old.url])
 
         func enabled(_ name: String, _ names: Set<String>) -> DuplicateCleanupFile {
             DuplicateCleanupFile(url: URL(fileURLWithPath: "/fixtures/\(name)"), names: names,
@@ -42,7 +34,6 @@ struct DuplicateCleanupTests {
         precondition(DuplicateCleanupPolicy.canRemove([onAndOff[0].url], from: onAndOff), "The only enabled copy may be selected explicitly")
         precondition(DuplicateCleanupPolicy.missingNames(afterRemoving: [onAndOff[0].url], from: onAndOff).isEmpty)
         precondition(DuplicateCleanupPolicy.canRemove([onAndOff[1].url], from: onAndOff))
-        precondition(DuplicateCleanupPolicy.suggestedSelection(in: onAndOff, limitedTo: Set(onAndOff.map(\.url))) == [onAndOff[1].url])
         let installedAndOn = [active, enabled("b.ttf", ["Regular"])]
         precondition(DuplicateCleanupPolicy.canRemove([installedAndOn[1].url], from: installedAndOn),
                      "An installed copy keeps the face on")
@@ -56,6 +47,6 @@ struct DuplicateCleanupTests {
         precondition(DuplicateCleanupPolicy.canRemove(Set(withLocked.map(\.url)), from: opened), "Unlocked copies allow explicit removal of all copies")
         let fixed = DuplicateCleanupPolicy.unlocking([active.url], in: files)
         precondition(fixed == files, "Only unlockable copies unlock")
-        print("PASS: explicit removal, unique-face warnings, unlocking, protected copies and conservative automatic suggestions")
+        print("PASS: explicit removal, unique-face warnings, unlocking, and protected copies")
     }
 }

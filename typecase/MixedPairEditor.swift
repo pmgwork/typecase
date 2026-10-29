@@ -2,8 +2,8 @@ import AppKit
 import Combine
 import SwiftUI
 
-/// The identifier of the mixed-pair window scene. The library's toolbar button
-/// opens it.
+/// The identifier of the mixed-pair window scene. The Mixed Fonts row's add
+/// button and Window > New Mixed Pair open it.
 enum MixedPairWindow {
     static let id = "mixedPairEditor"
 }
@@ -35,6 +35,16 @@ final class MixedPairDraft: ObservableObject {
 
     func didSave(_ pair: FontPair) {
         savedPairSelectionID = pair.selectionID
+    }
+
+    /// Whether the window has fonts to start from. The add button seeds the
+    /// draft before opening the window; Window > New Mixed Pair does not.
+    var isEmpty: Bool { selections.isEmpty }
+
+    /// Forgets the fonts once the window closes, so the next window starts
+    /// from the defaults rather than the last pair.
+    func end() {
+        selections = [:]
     }
 
     func selection(for script: MixedScript) -> FontFaceReference? {
@@ -101,6 +111,12 @@ struct MixedPairEditorView: View {
             }
         }
         .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
+        .onAppear {
+            if draft.isEmpty {
+                draft.begin(with: catalog.defaultMixedPairFamilies(), from: LibraryWindows.frontmost)
+            }
+        }
+        .onDisappear { draft.end() }
     }
 
     private var previewSize: Double {
