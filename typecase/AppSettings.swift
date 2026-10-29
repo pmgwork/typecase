@@ -32,6 +32,9 @@ final class AppSettings: ObservableObject {
     @Published var favoritesFirst: Bool {
         didSet { defaults.set(favoritesFirst, forKey: Key.favoritesFirst) }
     }
+    @Published var activatedFirst: Bool {
+        didSet { defaults.set(activatedFirst, forKey: Key.activatedFirst) }
+    }
     @Published var showAllSection: Bool {
         didSet { defaults.set(showAllSection, forKey: Key.showAllSection) }
     }
@@ -82,6 +85,7 @@ final class AppSettings: ObservableObject {
         previewTextColor = defaults.string(forKey: Key.previewTextColor)
             .flatMap(Color.init(specimenHex:))
         favoritesFirst = defaults.object(forKey: Key.favoritesFirst) as? Bool ?? false
+        activatedFirst = defaults.object(forKey: Key.activatedFirst) as? Bool ?? false
         showAllSection = defaults.object(forKey: Key.showAllSection) as? Bool ?? true
         showFavoritesSection = defaults.object(forKey: Key.showFavoritesSection) as? Bool ?? true
         showSystemSection = defaults.object(forKey: Key.showSystemSection) as? Bool ?? true
@@ -321,6 +325,7 @@ final class AppSettings: ObservableObject {
         static let previewBackgroundColor = "previewBackgroundColor"
         static let previewTextColor = "previewTextColor"
         static let favoritesFirst = "favoritesFirst"
+        static let activatedFirst = "activatedFirst"
         static let showAllSection = "showAllSection"
         static let showFavoritesSection = "showFavoritesSection"
         static let showSystemSection = "showSystemSection"

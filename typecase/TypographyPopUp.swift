@@ -56,9 +56,10 @@ struct TypographyPopUp: NSViewRepresentable {
     /// A bare NSPopUpButton can report a wider intrinsic size based on its
     /// longest menu item and draw outside SwiftUI's frame.
     final class PopUpContainer: NSView {
-        let button = NSPopUpButton(frame: .zero, pullsDown: false)
+        let button: NSPopUpButton
 
-        init() {
+        init(button: NSPopUpButton = NSPopUpButton(frame: .zero, pullsDown: false)) {
+            self.button = button
             super.init(frame: .zero)
             button.translatesAutoresizingMaskIntoConstraints = false
             button.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)

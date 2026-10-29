@@ -43,6 +43,7 @@ struct ContentView: View {
             // as its own control instead of merging into their background.
             ToolbarItem(placement: .navigation) {
                 PreviewSizeControl(size: $settings.previewSize)
+                    .padding(.trailing, 8)
             }
             .sharedBackgroundVisibility(.hidden)
 
@@ -50,15 +51,12 @@ struct ContentView: View {
             // drawn inside the button group's shared background.
             ToolbarItem(placement: .navigation) {
                 PreviewColorsControl()
+                    .padding(.trailing, 8)
             }
             .sharedBackgroundVisibility(.hidden)
 
             // On macOS, confirmationAction is the trailing toolbar region;
             // navigation items stay on the leading side.
-            ToolbarItem(placement: .navigation) {
-                NewMixedPairButton(catalog: catalog)
-            }
-
             ToolbarItem(placement: .confirmationAction) {
                 LibraryFilterMenu(viewState: viewState)
             }
@@ -206,10 +204,12 @@ private struct ToolbarSearchField: NSViewRepresentable {
     }
 }
 
-/// Compact preview-size control for the toolbar: small “A”, slider, large “A”.
+/// Compact preview-size control for the toolbar with a slider and point input.
 /// Also used by the mixed-pair window for its own specimen size.
 struct PreviewSizeControl: View {
     @Binding var size: Double
+    @State private var sizeText = ""
+    @FocusState private var isEditingSize: Bool
 
     /// A continuous slider keeps the system from drawing step tick marks below
     /// the track; the value still snaps to whole points.
@@ -226,21 +226,52 @@ struct PreviewSizeControl: View {
                 .font(.system(size: 9, weight: .medium))
                 .foregroundStyle(.secondary)
 
-            Slider(value: roundedSize, in: 18...72)
+            Slider(value: roundedSize, in: AppSettings.previewSizeRange)
                 .controlSize(.small)
                 .labelsHidden()
                 .frame(width: 96)
                 .accessibilityLabel(String(localized: "Preview size"))
 
-            Text("A")
-                .font(.system(size: 15, weight: .medium))
+            HStack(spacing: 3) {
+                TextField("", text: $sizeText)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 11).monospacedDigit())
+                    .foregroundStyle(.primary)
+                    .multilineTextAlignment(.trailing)
+                    .frame(width: 24)
+                    .focused($isEditingSize)
+                    .accessibilityLabel(String(localized: "Preview size"))
+                    .onSubmit {
+                        commitSize()
+                        isEditingSize = false
+                    }
+                    .onExitCommand {
+                        sizeText = String(Int(size))
+                        isEditingSize = false
+                    }
+                Text(verbatim: "pt")
+                    .font(.system(size: 10))
+            }
                 .foregroundStyle(.secondary)
         }
         .frame(height: 20)
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
+        .fixedSize(horizontal: true, vertical: false)
         .glassEffect(.regular, in: .capsule)
         .help(String(localized: "Preview size: \(Int(size)) pt"))
+        .onAppear { sizeText = String(Int(size)) }
+        .onChange(of: size) { _, value in sizeText = String(Int(value)) }
+        .onChange(of: isEditingSize) { _, editing in
+            if !editing { commitSize() }
+        }
+    }
+
+    private func commitSize() {
+        if let value = Double(sizeText), value.isFinite {
+            size = min(max(value.rounded(), AppSettings.previewSizeRange.lowerBound), AppSettings.previewSizeRange.upperBound)
+        }
+        sizeText = String(Int(size))
     }
 }
 
@@ -331,6 +362,16 @@ private struct PreviewColorsControl: View {
 
 }
 
+private extension View {
+    /// Shows a sidebar add button only while the pointer is over its row or
+    /// header, so the rows read like their neighbors at rest.
+    func revealedOnHover(_ visible: Bool) -> some View {
+        opacity(visible ? 1 : 0)
+            .allowsHitTesting(visible)
+            .accessibilityHidden(!visible)
+    }
+}
+
 private struct Sidebar: View {
     @ObservedObject var catalog: FontCatalog
     @ObservedObject var viewState: LibraryViewState
@@ -344,6 +385,9 @@ private struct Sidebar: View {
     @FocusState private var newTagNameFocused: Bool
     @State private var tagBeingRenamed: String?
     @State private var renamedTagName = ""
+    @State private var isMixedRowHovered = false
+    @State private var isFoldersHeaderHovered = false
+    @State private var isTagsHeaderHovered = false
 
     /// Show only detected services that the user has left visible.
     private var providerSections: [LibrarySection] {
@@ -357,7 +401,7 @@ private struct Sidebar: View {
             Section {
                 if settings.showAllSection { sectionRow(.all) }
                 if settings.showFavoritesSection { sectionRow(.favorites) }
-                if settings.showMixedSection { sectionRow(.mixed) }
+                if settings.showMixedSection { mixedRow }
                 if settings.showDuplicatesSection { sectionRow(.duplicates) }
                 if (settings.showAllSection || settings.showFavoritesSection
                     || settings.showMixedSection || settings.showDuplicatesSection)
@@ -432,12 +476,14 @@ private struct Sidebar: View {
                         .frame(width: 24, height: 24)
                         .help(String(localized: "Add a font folder"))
                         .accessibilityLabel(String(localized: "Add a font folder"))
+                        .revealedOnHover(isFoldersHeaderHovered)
 
                         disclosureButton(isExpanded: $foldersExpanded, title: String(localized: "Folders"))
                     }
                 }
                 .padding(.trailing, 12)
                 .contentShape(Rectangle())
+                .onHover { isFoldersHeaderHovered = $0 }
             }
 
             if settings.showTagsSection {
@@ -472,12 +518,15 @@ private struct Sidebar: View {
                             .popover(isPresented: $isAddingTag, arrowEdge: .top) {
                                 addTagForm
                             }
+                            // Stays visible while its popover is open.
+                            .revealedOnHover(isTagsHeaderHovered || isAddingTag)
 
                             disclosureButton(isExpanded: $tagsExpanded, title: String(localized: "Tags"))
                         }
                     }
                     .padding(.trailing, 12)
                     .contentShape(Rectangle())
+                    .onHover { isTagsHeaderHovered = $0 }
                 }
             }
         }
@@ -541,6 +590,28 @@ private struct Sidebar: View {
             .tag(selection)
     }
 
+    /// The Mixed Fonts row carries its add button, like the Folders and Tags
+    /// headers, and shows it the same way: on hover.
+    private var mixedRow: some View {
+        let selection = LibrarySelection.section(.mixed)
+        return HStack(spacing: 6) {
+            SidebarLabel(title: LibrarySection.mixed.title, icon: LibrarySection.mixed.icon)
+            Spacer(minLength: 6)
+            NewMixedPairButton(catalog: catalog)
+                .labelStyle(.iconOnly)
+                .buttonStyle(.borderless)
+                .controlSize(.small)
+                .foregroundStyle(Color(nsColor: .secondaryLabelColor))
+                .frame(width: 20, height: 24)
+                .revealedOnHover(isMixedRowHovered)
+        }
+        .contentShape(Rectangle())
+        .onHover { isMixedRowHovered = $0 }
+        .background(TableRowEmphasisConfigurator())
+        .badge(selectedCount(for: selection))
+        .tag(selection)
+    }
+
     /// The System Fonts disclosure group, including its installation scopes.
     private var systemGroup: some View {
         DisclosureGroup(isExpanded: $systemScopesExpanded) {
@@ -579,11 +650,13 @@ private struct Sidebar: View {
     private func headerControls<Content: View>(
         @ViewBuilder content: () -> Content
     ) -> some View {
-        HStack(spacing: 8) {
+        // The buttons' 24pt frames already space the icons apart.
+        HStack(spacing: 0) {
             content()
         }
         .buttonStyle(.borderless)
         .controlSize(.small)
+        .foregroundStyle(Color(nsColor: .secondaryLabelColor))
     }
 
     private func disclosureButton(
@@ -685,13 +758,13 @@ private struct FontLibraryView: View {
 
     private var visibleIDs: [FontFamily.ID] {
         if isMixedSection { return filteredMixedPairs.map(\.selectionID) }
-        return viewState.filter(catalog: catalog, favoritesFirst: settings.favoritesFirst)
+        return viewState.filter(catalog: catalog, favoritesFirst: settings.favoritesFirst, activatedFirst: settings.activatedFirst)
             .ids
     }
 
     var body: some View {
         VStack(spacing: 0) {
-            let output = viewState.filter(catalog: catalog, favoritesFirst: settings.favoritesFirst)
+            let output = viewState.filter(catalog: catalog, favoritesFirst: settings.favoritesFirst, activatedFirst: settings.activatedFirst)
             if isMixedSection {
                 mixedPairsContent
             } else if output.families.isEmpty {
@@ -976,8 +1049,10 @@ private struct FontLibraryView: View {
             ContentUnavailableView {
                 Label(String(localized: "No mixed pairs yet"), image: "mixed.font")
             } description: {
-                Text(String(localized: "Use the toolbar’s Mixed Font button to pair a Japanese font with a Latin one."))
+                Text(String(localized: "Pair a Japanese font with a Latin one."))
             } actions: {
+                NewMixedPairButton(catalog: catalog)
+                    .labelStyle(.titleOnly)
                 Button(String(localized: "Show All Fonts")) { viewState.librarySelection = .section(.all) }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)

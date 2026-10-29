@@ -12,6 +12,20 @@ nonisolated enum FontCategory: String, Codable, CaseIterable, Identifiable, Send
 
     var id: String { rawValue }
 
+    /// The category menu doubles as a type specimen. English labels can be
+    /// drawn by its Latin specimen fonts without Japanese fallback glyphs.
+    var specimenTitle: String {
+        switch self {
+        case .sansSerif: "Sans Serif"
+        case .serif: "Serif"
+        case .monospaced: "Monospaced"
+        case .display: "Display"
+        case .script: "Script / Handwriting"
+        case .symbols: "Symbols"
+        case .unclassified: "Unclassified"
+        }
+    }
+
     var title: String {
         switch self {
         case .sansSerif: String(localized: "Sans Serif")

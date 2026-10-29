@@ -56,9 +56,6 @@ private struct GeneralSettingsView: View {
 
             }
 
-            Section(String(localized: "Sorting")) {
-                Toggle(String(localized: "Show favorites first"), isOn: $settings.favoritesFirst)
-            }
         }
         .formStyle(.grouped)
         .fixedSize(horizontal: false, vertical: true)

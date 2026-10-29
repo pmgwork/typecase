@@ -5,6 +5,7 @@ import SwiftUI
 /// highlighted, and retain standard keyboard navigation and checkmarks.
 struct LibraryFilterMenu: NSViewRepresentable {
     @ObservedObject var viewState: LibraryViewState
+    @EnvironmentObject private var settings: AppSettings
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
@@ -21,7 +22,7 @@ struct LibraryFilterMenu: NSViewRepresentable {
     }
 
     func updateNSView(_ button: NSPopUpButton, context: Context) {
-        button.menu = context.coordinator.makeMenu(for: viewState)
+        button.menu = context.coordinator.makeMenu(for: viewState, settings: settings)
         button.setAccessibilityLabel(String(localized: "Filter"))
         button.toolTip = String(localized: "Filter by category and status, and choose the list order")
     }
@@ -29,9 +30,11 @@ struct LibraryFilterMenu: NSViewRepresentable {
     @MainActor
     final class Coordinator: NSObject {
         private weak var viewState: LibraryViewState?
+        private weak var settings: AppSettings?
 
-        func makeMenu(for viewState: LibraryViewState) -> NSMenu {
+        func makeMenu(for viewState: LibraryViewState, settings: AppSettings) -> NSMenu {
             self.viewState = viewState
+            self.settings = settings
             let menu = NSMenu()
             menu.autoenablesItems = false
             let title = NSMenuItem(title: "", action: nil, keyEquivalent: "")
@@ -41,12 +44,12 @@ struct LibraryFilterMenu: NSViewRepresentable {
 
             let categories = NSMenu(title: String(localized: "Category"))
             categories.autoenablesItems = false
-            let all = item(String(localized: "All Categories"), action: #selector(selectCategory(_:)))
+            let all = item("All Categories", action: #selector(selectCategory(_:)))
             all.state = viewState.category == nil ? .on : .off
             categories.addItem(all)
             for category in FontCategory.allCases {
-                let choice = item(category.title, action: #selector(selectCategory(_:)), value: category.rawValue)
-                choice.attributedTitle = NSAttributedString(string: category.title, attributes: [
+                let choice = item(category.specimenTitle, action: #selector(selectCategory(_:)), value: category.rawValue)
+                choice.attributedTitle = NSAttributedString(string: category.specimenTitle, attributes: [
                     .font: specimenFont(for: category)
                 ])
                 choice.state = viewState.category == category ? .on : .off
@@ -72,6 +75,13 @@ struct LibraryFilterMenu: NSViewRepresentable {
                 choice.state = viewState.sortOrder == sort ? .on : .off
                 order.addItem(choice)
             }
+            order.addItem(.separator())
+            let activated = item(String(localized: "Activated First"), action: #selector(toggleActivatedFirst(_:)))
+            activated.state = settings.activatedFirst ? .on : .off
+            order.addItem(activated)
+            let favorites = item(String(localized: "Show favorites first"), action: #selector(toggleFavoritesFirst(_:)))
+            favorites.state = settings.favoritesFirst ? .on : .off
+            order.addItem(favorites)
             addSubmenu(order, to: menu)
             return menu
         }
@@ -118,6 +128,18 @@ struct LibraryFilterMenu: NSViewRepresentable {
         @objc private func selectOrder(_ sender: NSMenuItem) {
             guard let raw = sender.representedObject as? String, let order = LibrarySortOrder(rawValue: raw) else { return }
             viewState?.sortOrder = order
+        }
+
+        @objc private func toggleFavoritesFirst(_ sender: NSMenuItem) {
+            guard let settings else { return }
+            settings.favoritesFirst.toggle()
+            sender.state = settings.favoritesFirst ? .on : .off
+        }
+
+        @objc private func toggleActivatedFirst(_ sender: NSMenuItem) {
+            guard let settings else { return }
+            settings.activatedFirst.toggle()
+            sender.state = settings.activatedFirst ? .on : .off
         }
     }
 }

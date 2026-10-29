@@ -343,15 +343,16 @@ struct MixedPairEditorView: View {
     }
 
     /// One part's font pop-up: the families that can fill it, in name order,
-    /// with a compact native control matching the style pop-up. Choosing a
+    /// searchable because the list runs to hundreds of families. Choosing a
     /// family resets the weight to its preferred mixed face (W5 or Medium when
     /// that style exists).
     private func fontMenu(
         _ script: MixedScript,
         selection: Binding<FontFamily.ID?>
     ) -> some View {
-        TypographyPopUp(
+        SearchablePopUp(
             title: String(localized: "\(script.title) font"),
+            searchPrompt: String(localized: "Search fonts"),
             options: [TypographyPopUp.Option(id: nil, title: script.isRequired ? String(localized: "None") : String(localized: "Automatic"))]
                 + catalog.families(for: script).map { .init(id: $0.id, title: $0.name) },
             selection: selection
@@ -379,8 +380,9 @@ struct MixedPairEditorView: View {
         selection: Binding<String?>
     ) -> some View {
         let family = family(for: script)
-        return TypographyPopUp(
+        return SearchablePopUp(
             title: String(localized: "\(script.title) style"),
+            searchPrompt: String(localized: "Search styles"),
             options: family?.faces.map { .init(id: $0.postScriptName, title: $0.styleName) }
                 ?? [.init(id: nil, title: String(localized: "No style"))],
             selection: selection,
@@ -709,7 +711,7 @@ private struct PresetComboBox: NSViewRepresentable {
     }
 }
 
-/// The library window's toolbar button: fills the draft with the fonts a new
+/// The Mixed Fonts list's add action: fills the draft with the fonts a new
 /// pair starts from and opens the mixed-pair window.
 struct NewMixedPairButton: View {
     @ObservedObject var catalog: FontCatalog
@@ -721,15 +723,7 @@ struct NewMixedPairButton: View {
             draft.begin(with: catalog.defaultMixedPairFamilies(), from: NSApp.keyWindow)
             openWindow(id: MixedPairWindow.id)
         } label: {
-            // The toolbar draws nothing for a custom symbol named in the
-            // asset catalog, so it gets the symbol as an AppKit image.
-            Label {
-                Text(String(localized: "Mixed Font"))
-            } icon: {
-                if let symbol = NSImage(named: "mixed.font") {
-                    Image(nsImage: symbol)
-                }
-            }
+            Label(String(localized: "New Mixed Pair"), systemImage: "plus")
         }
         .help(String(localized: "Create a mixed-font pair"))
     }
