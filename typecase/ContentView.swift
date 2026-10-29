@@ -105,8 +105,8 @@ struct ContentView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: .addFontFolder)) { _ in
             // The File menu command is not tied to a window; only the frontmost
-            // library window navigates to the newly added folder, even while the
-            // PlayGround or another window is key.
+            // library window navigates to the newly added folder, even while
+            // another window is key.
             guard let window, window === LibraryWindows.frontmost else { return }
             window.makeKeyAndOrderFront(nil)
             catalog.addFolder { url in viewState.librarySelection = .folder(url) }
@@ -233,7 +233,8 @@ struct PreviewSizeControl: View {
                 .accessibilityLabel(String(localized: "Preview size"))
 
             HStack(spacing: 3) {
-                TextField("", text: $sizeText)
+                // No visible title; a String keeps it out of the string catalog.
+                TextField(String(), text: $sizeText)
                     .textFieldStyle(.plain)
                     .font(.system(size: 11).monospacedDigit())
                     .foregroundStyle(.primary)
@@ -364,11 +365,11 @@ private struct PreviewColorsControl: View {
 
 private extension View {
     /// Shows a sidebar add button only while the pointer is over its row or
-    /// header, so the rows read like their neighbors at rest.
+    /// header, so the rows read like their neighbors at rest. VoiceOver still
+    /// reaches the hidden button.
     func revealedOnHover(_ visible: Bool) -> some View {
         opacity(visible ? 1 : 0)
             .allowsHitTesting(visible)
-            .accessibilityHidden(!visible)
     }
 }
 
@@ -1503,8 +1504,7 @@ private struct FontFamilyRow: View, Equatable {
 
 /// Uses AppKit's native selection paint: gray in the sidebar, emphasized in
 /// the font list. While a custom canvas color is set the system paint is
-/// suppressed, so the row's own veil is the only selection mark. The PlayGround
-/// canvas reuses the same behavior for its blocks.
+/// suppressed, so the row's own veil is the only selection mark.
 struct TableRowEmphasisConfigurator: NSViewRepresentable {
     var isEmphasized = false
     var hidesSelectionHighlight = false
@@ -2314,12 +2314,11 @@ private struct ComparisonView: View {
     ContentView()
         .environmentObject(FontCatalog())
         .environmentObject(AppSettings())
-        .environmentObject(PlaygroundStore())
         .environmentObject(MixedPairDraft())
 }
 
 /// The open library windows, so app-wide commands and alerts reach exactly one
-/// of them even while another window (PlayGround, Settings) is key.
+/// of them even while another window (Settings, a mixed pair) is key.
 @MainActor
 enum LibraryWindows {
     static let id = "library"

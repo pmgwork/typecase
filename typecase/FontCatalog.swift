@@ -431,16 +431,6 @@ final class FontCatalog: ObservableObject {
         return result
     }
 
-    /// The Japanese face used by a blank PlayGround type scale. Look it up in
-    /// the catalog so the inspector and the specimen resolve the same font.
-    func defaultPlaygroundFace() -> FontFaceReference? {
-        guard let family = family(matching: [
-            "Hiragino Sans", "ヒラギノ角ゴシック",
-            "Hiragino Kaku Gothic ProN", "ヒラギノ角ゴ ProN",
-        ]), let face = family.defaultMixedFace(for: .japanese) else { return nil }
-        return FontFaceReference(familyID: family.id, postScriptName: face.postScriptName)
-    }
-
     /// The first installed family whose name matches one of the candidates,
     /// comparing both the family id and the names the library shows.
     private func family(matching candidates: [String]) -> FontFamily? {
@@ -1233,13 +1223,7 @@ final class FontCatalog: ObservableObject {
     /// The characters of `text` the family's preview face cannot display.
     func missingCharacters(in text: String, for family: FontFamily) async -> [String] {
         guard let face = family.previewFace else { return [] }
-        return await missingCharacters(in: text, for: face)
-    }
-
-    /// The characters of `text` the face cannot display. The family's version
-    /// checks the preview face; the PlayGround checks the style a block uses.
-    func missingCharacters(in text: String, for face: FontFace) async -> [String] {
-        await coverage.missingCharacters(
+        return await coverage.missingCharacters(
             postScriptName: face.postScriptName,
             fileURL: face.fileURL,
             text: text

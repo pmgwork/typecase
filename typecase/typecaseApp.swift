@@ -12,7 +12,6 @@ struct typecaseApp: App {
     @StateObject private var updater = AppUpdater()
     @StateObject private var catalog = FontCatalog()
     @StateObject private var settings = AppSettings()
-    @StateObject private var playground = PlaygroundStore()
     @StateObject private var mixedPairDraft = MixedPairDraft()
 
     var body: some Scene {
@@ -20,7 +19,6 @@ struct typecaseApp: App {
             ContentView()
                 .environmentObject(catalog)
                 .environmentObject(settings)
-                .environmentObject(playground)
                 .environmentObject(mixedPairDraft)
                 .task { catalog.start() }
         }
@@ -35,8 +33,6 @@ struct typecaseApp: App {
             }
             CommandGroup(after: .newItem) {
                 AddFontFolderCommand(catalog: catalog, settings: settings)
-
-                OpenPlaygroundCommand()
             }
             CommandGroup(after: .sidebar) {
                 Button(String(localized: "Refresh Font Library")) {
@@ -45,16 +41,6 @@ struct typecaseApp: App {
                 .keyboardShortcut("r", modifiers: .command)
             }
         }
-
-        Window("PlayGround", id: PlaygroundWindow.id) {
-            PlaygroundView()
-                .environmentObject(catalog)
-                .environmentObject(settings)
-                .environmentObject(playground)
-        }
-        .defaultSize(width: 1040, height: 720)
-        .defaultPosition(.center)
-        .windowResizability(.contentMinSize)
 
         Window(String(localized: "New Mixed Pair"), id: MixedPairWindow.id) {
             MixedPairEditorView(catalog: catalog)
@@ -77,19 +63,6 @@ struct typecaseApp: App {
                 .environmentObject(settings)
                 .environmentObject(catalog)
         }
-    }
-}
-
-/// Opens the PlayGround window from the File menu. The library's toolbar adds
-/// the selected fonts as well.
-private struct OpenPlaygroundCommand: View {
-    @Environment(\.openWindow) private var openWindow
-
-    var body: some View {
-        Button(String(localized: "Open PlayGround")) {
-            openWindow(id: PlaygroundWindow.id)
-        }
-        .keyboardShortcut("g", modifiers: [.command, .shift])
     }
 }
 

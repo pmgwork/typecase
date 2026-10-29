@@ -14,39 +14,23 @@
             "state": "translated",
             "value": "和文フォントと欧文フォントを組み合わせて、混植ペアを作成します。"
           }
-        }
-      }
-    },
-    "%@ · %@ · Click to edit text; press Esc, then Delete, to remove the block": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "%@ · %@ · Click to edit text; press Esc, then Delete, to remove the block"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "%1$@ · %2$@ · クリックして編集。Escの後にDeleteを押すとブロックを削除"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "%1$@ · %2$@ · 클릭하여 편집. Esc를 누른 다음 Delete를 눌러 블록 삭제"
-          }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "%1$@ · %2$@ · 点击编辑；先按 Esc，再按 Delete 删除区块"
+            "value": "将日文字体与西文字体组合，创建混排组合。"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "%1$@ · %2$@ · 點按編輯；先按 Esc，再按 Delete 刪除區塊"
+            "value": "將日文字體與西文字體組合，建立混排組合。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "일본어 글꼴과 라틴 글꼴을 조합해 혼합 글꼴 조합을 만듭니다."
           }
         }
       }
@@ -115,40 +99,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "%@字體"
-          }
-        }
-      }
-    },
-    "%@ Previous": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "%@ Previous"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "%@（以前のレイアウト）"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "%@ 이전 버전"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "%@（之前的布局）"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "%@（先前的版面）"
           }
         }
       }
@@ -723,40 +673,6 @@
         }
       }
     },
-    "Add a block, then set it in any font in your library.": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Add a block, then set it in any font in your library."
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "ブロックを追加し、ライブラリのフォントを指定してください。"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "블록을 추가한 다음 라이브러리의 글꼴을 지정하세요."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "添加区块，然后选择字体库中的任意字体。"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "加入區塊，然後選擇字體庫中的任意字體。"
-          }
-        }
-      }
-    },
     "Add a folder that contains font files to browse them without installing.": {
       "localizations": {
         "en": {
@@ -821,40 +737,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "加入字體檔案夾"
-          }
-        }
-      }
-    },
-    "Add a heading or paragraph after the selected block": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Add a heading or paragraph after the selected block"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "選択したブロックの後ろに見出しや段落を追加"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "선택한 블록 뒤에 제목이나 문단 추가"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "在所选区块后添加标题或段落"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "在所選區塊後加入標題或段落"
           }
         }
       }
@@ -927,40 +809,6 @@
         }
       }
     },
-    "Add Block": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Add Block"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "ブロックを追加"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "블록 추가"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "添加区块"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "加入區塊"
-          }
-        }
-      }
-    },
     "Add Folder": {
       "localizations": {
         "en": {
@@ -1025,40 +873,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "加入字體檔案夾…"
-          }
-        }
-      }
-    },
-    "Add the selected fonts to the PlayGround": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Add the selected fonts to the PlayGround"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "選択したフォントをPlayGroundに追加"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "선택한 글꼴을 PlayGround에 추가"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "将所选字体添加到 PlayGround"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "將所選字體加入 PlayGround"
           }
         }
       }
@@ -1777,40 +1591,6 @@
         }
       }
     },
-    "Block Actions": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Block Actions"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "ブロックの操作"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "블록 작업"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "区块操作"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "區塊操作"
-          }
-        }
-      }
-    },
     "Brightness": {
       "localizations": {
         "en": {
@@ -2423,40 +2203,6 @@
         }
       }
     },
-    "Choose a layout, or create, rename, duplicate, or delete one": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Choose a layout, or create, rename, duplicate, or delete one"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "レイアウトの選択、作成、名前変更、複製、削除"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "레이아웃 선택, 생성, 이름 변경, 복제 또는 삭제"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "选择、创建、重命名、复制或删除布局"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "選擇、建立、重新命名、複製或刪除版面"
-          }
-        }
-      }
-    },
     "Choose preview text": {
       "localizations": {
         "en": {
@@ -2763,40 +2509,6 @@
         }
       }
     },
-    "Clear Text": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Clear Text"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "テキストを消去"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "텍스트 지우기"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "清除文本"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "清除文字"
-          }
-        }
-      }
-    },
     "Code Point": {
       "localizations": {
         "en": {
@@ -3069,40 +2781,6 @@
         }
       }
     },
-    "Copied": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Copied"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "コピーしました"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "복사됨"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "已复制"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "已複製"
-          }
-        }
-      }
-    },
     "Copy %@": {
       "localizations": {
         "en": {
@@ -3133,40 +2811,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "複製%@"
-          }
-        }
-      }
-    },
-    "Copy as Image": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Copy as Image"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "画像としてコピー"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "이미지로 복사"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "复制为图像"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "複製為影像"
           }
         }
       }
@@ -3375,40 +3019,6 @@
         }
       }
     },
-    "Copy the layout to the clipboard as an image (⌥⌘C)": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Copy the layout to the clipboard as an image (⌥⌘C)"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "レイアウトを画像としてクリップボードにコピー（⌥⌘C）"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "레이아웃을 이미지로 클립보드에 복사(⌥⌘C)"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "将布局作为图像复制到剪贴板（⌥⌘C）"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "將版面作為影像複製到剪貼簿（⌥⌘C）"
-          }
-        }
-      }
-    },
     "Copy Unicode Name": {
       "localizations": {
         "en": {
@@ -3473,40 +3083,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "著作權"
-          }
-        }
-      }
-    },
-    "Could Not Copy Image": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Could Not Copy Image"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "画像をコピーできませんでした"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "이미지를 복사할 수 없음"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "无法复制图像"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "無法複製影像"
           }
         }
       }
@@ -3863,40 +3439,6 @@
         }
       }
     },
-    "Delete “%@”?": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Delete “%@”?"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "「%@」を削除しますか？"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "“%@”을(를) 삭제할까요?"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "删除“%@”？"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "刪除「%@」？"
-          }
-        }
-      }
-    },
     "Delete %lld Pairs": {
       "localizations": {
         "en": {
@@ -3939,74 +3481,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "刪除 %lld 個組合"
-          }
-        }
-      }
-    },
-    "Delete Block": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Delete Block"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "ブロックを削除"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "블록 삭제"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "删除区块"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "刪除區塊"
-          }
-        }
-      }
-    },
-    "Delete Layout": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Delete Layout"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "レイアウトを削除"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "레이아웃 삭제"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "删除布局"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "刪除版面"
           }
         }
       }
@@ -4453,74 +3927,6 @@
         }
       }
     },
-    "Duplicate Block": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Duplicate Block"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "ブロックを複製"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "블록 복제"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "复制区块"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "複製區塊"
-          }
-        }
-      }
-    },
-    "Duplicate, reorder, choose sample text, or delete this block": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Duplicate, reorder, choose sample text, or delete this block"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "このブロックの複製、並べ替え、サンプルの選択、削除"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "이 블록 복제, 순서 변경, 샘플 텍스트 선택 또는 삭제"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "复制、排序、选择示例文本或删除此区块"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "複製、排序、選擇範例文字或刪除此區塊"
-          }
-        }
-      }
-    },
     "Duplicates": {
       "localizations": {
         "en": {
@@ -4721,40 +4127,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "嵌入權限"
-          }
-        }
-      }
-    },
-    "Empty Layout": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Empty Layout"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "空のレイアウト"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "빈 레이아웃"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "空白布局"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "空白版面"
           }
         }
       }
@@ -5677,108 +5049,6 @@
         }
       }
     },
-    "Heading 1": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Heading 1"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "見出し1"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "제목 1"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "标题 1"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "標題 1"
-          }
-        }
-      }
-    },
-    "Heading 2": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Heading 2"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "見出し2"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "제목 2"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "标题 2"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "標題 2"
-          }
-        }
-      }
-    },
-    "Heading 3": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Heading 3"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "見出し3"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "제목 3"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "标题 3"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "標題 3"
-          }
-        }
-      }
-    },
     "Hue": {
       "localizations": {
         "en": {
@@ -5809,40 +5079,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "色相"
-          }
-        }
-      }
-    },
-    "Image copied to clipboard": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Image copied to clipboard"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "画像をクリップボードにコピーしました"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "이미지를 클립보드에 복사했습니다."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "图像已复制到剪贴板"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "影像已複製到剪貼簿"
           }
         }
       }
@@ -6494,40 +5730,6 @@
         }
       }
     },
-    "Left": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Left"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "左揃え"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "왼쪽"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "左对齐"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "靠左對齊"
-          }
-        }
-      }
-    },
     "Letters": {
       "localizations": {
         "en": {
@@ -6626,40 +5828,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "淺色"
-          }
-        }
-      }
-    },
-    "Line Height": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Line Height"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "行高"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "줄 높이"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "行高"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "行高"
           }
         }
       }
@@ -6936,40 +6104,6 @@
         }
       }
     },
-    "Missing Font": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Missing Font"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "見つからないフォント"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "누락된 글꼴"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "缺失字体"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "遺失字體"
-          }
-        }
-      }
-    },
     "Mixed Fonts": {
       "localizations": {
         "en": {
@@ -7038,74 +6172,6 @@
         }
       }
     },
-    "Move Down": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Move Down"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "下へ移動"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "아래로 이동"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "下移"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "下移"
-          }
-        }
-      }
-    },
-    "Move Up": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Move Up"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "上へ移動"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "위로 이동"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "上移"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "上移"
-          }
-        }
-      }
-    },
     "Name": {
       "localizations": {
         "en": {
@@ -7136,40 +6202,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "名稱"
-          }
-        }
-      }
-    },
-    "New Layout": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "New Layout"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "新規レイアウト"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "새 레이아웃"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "新建布局"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "新增版面"
           }
         }
       }
@@ -8092,40 +7124,6 @@
         }
       }
     },
-    "Open PlayGround": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Open PlayGround"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "PlayGroundを開く"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "PlayGround 열기"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "打开 PlayGround"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "打開 PlayGround"
-          }
-        }
-      }
-    },
     "OpenType Features": {
       "localizations": {
         "en": {
@@ -8293,40 +7291,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "其他"
-          }
-        }
-      }
-    },
-    "Paragraph": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Paragraph"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "段落"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "문단"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "段落"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "段落"
           }
         }
       }
@@ -9011,40 +7975,6 @@
         }
       }
     },
-    "Rename Layout": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Rename Layout"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "レイアウト名を変更"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "레이아웃 이름 변경"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "重命名布局"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "重新命名版面"
-          }
-        }
-      }
-    },
     "Rename Tag": {
       "localizations": {
         "en": {
@@ -9109,40 +8039,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "重新命名標籤…"
-          }
-        }
-      }
-    },
-    "Rename…": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Rename…"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "名前を変更…"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "이름 변경…"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "重命名…"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "重新命名…"
           }
         }
       }
@@ -9250,40 +8146,6 @@
         }
       }
     },
-    "Reset to %@": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Reset to %@"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "%@にリセット"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "%@ 기본값으로 재설정"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "重置为%@"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "重設為%@"
-          }
-        }
-      }
-    },
     "Restart TypeCase to apply language changes.": {
       "localizations": {
         "en": {
@@ -9386,74 +8248,6 @@
         }
       }
     },
-    "Return every feature to the font's default": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Return every feature to the font's default"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "すべての機能をフォントのデフォルトに戻す"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "모든 기능을 글꼴 기본값으로 복원"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "将所有功能恢复为字体默认值"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "將所有功能回復為字體預設值"
-          }
-        }
-      }
-    },
-    "Return size, line height, and tracking to the %@ defaults": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Return size, line height, and tracking to the %@ defaults"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "サイズ、行高、トラッキングを%@のデフォルトに戻す"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "크기, 줄 높이, 자간을 %@ 기본값으로 복원"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "将大小、行高和字距恢复为%@的默认值"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "將大小、行高和字距回復為%@的預設值"
-          }
-        }
-      }
-    },
     "Return to the style's own axis values": {
       "localizations": {
         "en": {
@@ -9518,40 +8312,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "在 Finder 中顯示所有副本"
-          }
-        }
-      }
-    },
-    "Right": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Right"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "右揃え"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "오른쪽"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "右对齐"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "靠右對齊"
           }
         }
       }
@@ -9862,40 +8622,6 @@
         }
       }
     },
-    "Select a block": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Select a block"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "ブロックを選択"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "블록 선택"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "选择区块"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "選擇區塊"
-          }
-        }
-      }
-    },
     "Select a font": {
       "localizations": {
         "en": {
@@ -10198,40 +8924,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "在 Finder 中顯示"
-          }
-        }
-      }
-    },
-    "Show or hide the block settings (⌥⌘I)": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Show or hide the block settings (⌥⌘I)"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "ブロック設定の表示／非表示（⌥⌘I）"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "블록 설정 표시 또는 숨기기(⌥⌘I)"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "显示或隐藏区块设置（⌥⌘I）"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "顯示或隱藏區塊設定（⌥⌘I）"
           }
         }
       }
@@ -10606,40 +9298,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "來源"
-          }
-        }
-      }
-    },
-    "Space added between Japanese and Latin letters or figures, as a percentage of the font size (和欧間のアキ)": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Space added between Japanese and Latin letters or figures, as a percentage of the font size (和欧間のアキ)"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "和文と欧文・数字の間に加える間隔（フォントサイズに対する割合）"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "일본어와 로마자 또는 숫자 사이에 추가하는 간격(글꼴 크기 대비 백분율)"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "日文与西文字母或数字之间添加的间距，以字号的百分比表示"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "日文與西文字母或數字之間加入的間距，以字級的百分比表示"
           }
         }
       }
@@ -11460,108 +10118,6 @@
         }
       }
     },
-    "The layout could not be rendered as an image. Try again.": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "The layout could not be rendered as an image. Try again."
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "レイアウトを画像として描画できませんでした。もう一度お試しください。"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "레이아웃을 이미지로 렌더링하지 못했습니다. 다시 시도하세요."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "无法将布局渲染为图像，请重试。"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "無法將版面算繪為影像，請重試。"
-          }
-        }
-      }
-    },
-    "The layout’s blocks are removed.": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "The layout’s blocks are removed."
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "このレイアウトのブロックが削除されます。"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "이 레이아웃의 블록이 삭제됩니다."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "此布局中的区块将被移除。"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "此版面中的區塊將被移除。"
-          }
-        }
-      }
-    },
-    "The name appears in the layout menu.": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "The name appears in the layout menu."
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "この名前がレイアウトメニューに表示されます。"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "이 이름이 레이아웃 메뉴에 표시됩니다."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "此名称会显示在布局菜单中。"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "此名稱會顯示在版面選單中。"
-          }
-        }
-      }
-    },
     "The selected font cannot display these characters of the preview text": {
       "localizations": {
         "en": {
@@ -11592,40 +10148,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "所選字體無法顯示預覽文字中的這些字元"
-          }
-        }
-      }
-    },
-    "The selected style cannot display these characters": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "The selected style cannot display these characters"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "選択したスタイルではこれらの文字を表示できません"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "선택한 스타일로 이 문자를 표시할 수 없습니다."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "所选样式无法显示这些字符"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "所選樣式無法顯示這些字元"
           }
         }
       }
@@ -12102,40 +10624,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "未知"
-          }
-        }
-      }
-    },
-    "Untitled": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Untitled"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "名称未設定"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "무제"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "未命名"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "未命名"
           }
         }
       }
@@ -13615,6 +12103,24 @@
             "state": "translated",
             "value": "フォントを検索"
           }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "搜索字体"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "搜尋字體"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "글꼴 검색"
+          }
         }
       }
     },
@@ -13631,6 +12137,24 @@
             "state": "translated",
             "value": "スタイルを検索"
           }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "搜索样式"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "搜尋樣式"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "스타일 검색"
+          }
         }
       }
     },
@@ -13646,6 +12170,24 @@
           "stringUnit": {
             "state": "translated",
             "value": "一致する項目がありません"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "没有匹配项"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "沒有符合的項目"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "일치하는 항목 없음"
           }
         }
       }

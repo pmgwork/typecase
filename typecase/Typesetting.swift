@@ -76,7 +76,7 @@ nonisolated struct OpenTypeFeature: Identifiable, Hashable, Sendable {
     }
 }
 
-/// The typesetting choices a PlayGround block or a mixed pair carries on top
+/// The typesetting choices a mixed pair carries on top
 /// of its fonts: OpenType feature overrides, the space between Japanese and
 /// Latin text (和欧間のアキ), and the Character panel settings Illustrator
 /// uses — kerning, tracking in 1/1000 em, and tsume (文字ツメ).
@@ -175,9 +175,6 @@ nonisolated struct TypesettingOptions: Codable, Hashable, Sendable {
     mutating func set(_ feature: OpenTypeFeature, on: Bool) {
         features[feature.tag] = on == feature.isOnByDefault ? nil : on
     }
-
-    /// The tags switched away from their defaults, for the "N on" summaries.
-    var changedFeatureCount: Int { features.count }
 
     /// The space in points for a given font size.
     func spacing(at size: CGFloat) -> CGFloat {

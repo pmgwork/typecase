@@ -12,8 +12,8 @@ ROOT = Path(__file__).resolve().parents[1]
 CATALOG = ROOT / "typecase/Localizable.xcstrings"
 LANGUAGES = {"en", "ja", "zh-Hans", "zh-Hant", "ko"}
 # Product names, font style data, units, and composition-only formats.
-VERBATIM = {"TypeCase", "PlayGround", "Regular", "A", "—", "%lld", "%lld pt",
-            "%@ · %@", "%@ (%@)"}
+VERBATIM = {"TypeCase", "Regular", "A", "—", "%lld", "%lld pt",
+            "%@ · %@", "%@ (%@)", "%@–%@"}
 TOKEN = re.compile(r"%(?:(\d+)\$)?(lld|@|%)")
 
 
