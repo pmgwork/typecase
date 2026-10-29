@@ -3,9 +3,9 @@
 <plist version="1.0">
 <dict>
 	<key>SUFeedURL</key>
-	<string></string>
+	<string>https://github.com/pmgwork/typecase/releases/download/beta/appcast.xml</string>
 	<key>SUPublicEDKey</key>
-	<string></string>
+	<string>KoJ5DpCzG5oORKktKBHVOVjyvA1E4OBsO93S7uLUDlU=</string>
 	<key>SUEnableInstallerLauncherService</key>
 	<true/>
 	<key>SUEnableDownloaderService</key>
