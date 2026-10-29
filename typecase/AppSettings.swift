@@ -221,9 +221,9 @@ final class AppSettings: ObservableObject {
         if showAllSection { sections.append(.all) }
         if showFavoritesSection { sections.append(.favorites) }
         if showMixedSection { sections.append(.mixed) }
+        if showDuplicatesSection { sections.append(.duplicates) }
         if showSystemSection { sections.append(.system) }
         if showLocalSection { sections.append(.local) }
-        if showDuplicatesSection { sections.append(.duplicates) }
         for provider in FontProviderRegistry.all where isProviderSectionVisible(provider.id) {
             sections.append(.provider(provider))
         }

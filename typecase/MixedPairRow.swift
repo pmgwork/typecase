@@ -43,7 +43,7 @@ struct MixedPairRow: View, Equatable {
             HStack(spacing: 8) {
                 // The pair has no activation state; the mark keeps its name
                 // aligned with the font rows.
-                Image(systemName: "rectangle.on.rectangle")
+                Image("mixed.font")
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .frame(width: 16)

@@ -1,9 +1,11 @@
 import SwiftUI
 
-/// The icon of a sidebar destination: an SF Symbol, or a bundled mark image
-/// that keeps its own colors. Service navigation uses neutral SF Symbols.
+/// The icon of a sidebar destination: an SF Symbol, a custom symbol from the
+/// asset catalog, or a bundled mark image that keeps its own colors. Service
+/// navigation uses neutral SF Symbols.
 nonisolated enum SourceIcon: Hashable, Sendable {
     case symbol(String)
+    case customSymbol(String)
     case asset(String)
 }
 
@@ -17,6 +19,8 @@ struct SourceIconView: View {
         switch icon {
         case .symbol(let name):
             Image(systemName: name)
+        case .customSymbol(let name):
+            Image(name)
         case .asset(let name):
             Image(name)
                 .renderingMode(.original)

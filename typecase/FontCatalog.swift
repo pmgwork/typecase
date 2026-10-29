@@ -72,6 +72,8 @@ final class FontCatalog: ObservableObject {
     /// Whether the snapshot on disk matches the current scan results.
     private var snapshotIsCurrent = false
     private var metadataCache: [URL: [String: FontNameTable.Metadata]] = [:]
+    /// Each face's variable axes by PostScript name; nil marks a static face.
+    private var variableInfoCache: [String: VariableFontInfo?] = [:]
     private var lastDirectoryFingerprint: UInt64 = 0
     private var securityScopedURLs: [URL] = []
     private var refreshTask: Task<Void, Never>?
@@ -547,10 +549,21 @@ final class FontCatalog: ObservableObject {
 
     // MARK: - Folders
 
-    func addFolder(onAdded: ((URL) -> Void)? = nil) {
+    /// Asks for ~/Library/Fonts, so its copies can be cleaned up.
+    func addUserFontsFolder(onAdded: ((URL) -> Void)? = nil) {
+        addFolder(
+            startingAt: Self.userFontsFolder,
+            message: String(localized: "Add your Fonts folder so TypeCase can move duplicate copies in it to Trash."),
+            onAdded: onAdded
+        )
+    }
+
+    func addFolder(startingAt directory: URL? = nil, message: String? = nil, onAdded: ((URL) -> Void)? = nil) {
         let panel = NSOpenPanel()
         panel.title = String(localized: "Choose a font folder")
         panel.prompt = String(localized: "Add Folder")
+        panel.directoryURL = directory
+        panel.message = message ?? ""
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
         panel.allowsMultipleSelection = true
@@ -560,9 +573,12 @@ final class FontCatalog: ObservableObject {
         // inside a menu tracking session does not appear.
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
-            let window = NSApp.keyWindow
+            var window = NSApp.keyWindow
                 ?? NSApp.mainWindow
                 ?? NSApp.windows.first(where: { $0.isVisible })
+            // A window already showing a sheet queues another one out of view,
+            // so present on the frontmost sheet, such as the cleanup sheet.
+            while let sheet = window?.attachedSheet { window = sheet }
             if let window {
                 panel.beginSheetModal(for: window) { response in
                     Task { @MainActor in self.adoptFolders(from: panel, response: response, onAdded: onAdded) }
@@ -618,6 +634,137 @@ final class FontCatalog: ObservableObject {
     func revealFiles(_ urls: [URL]) {
         guard !urls.isEmpty else { return }
         NSWorkspace.shared.activateFileViewerSelecting(urls)
+    }
+
+    /// Only inactive local files in added folders can be cleaned up here.
+    /// System and provider files remain under their original app's control.
+    private static let userFontsFolder = SystemFontScope.homeDirectory
+        .appending(path: "Library/Fonts", directoryHint: .isDirectory).standardizedFileURL
+
+    func duplicateCleanupFiles() -> [DuplicateCleanupFile] {
+        var namesByURL: [URL: Set<String>] = [:]
+        var protectedURLs: Set<URL> = []
+        for record in installedRecords + folderRecords {
+            guard let url = record.face.fileURL?.standardizedFileURL else { continue }
+            namesByURL[url, default: []].insert(record.face.postScriptName)
+            // Installed records read as .system even for a folder copy Core
+            // Text resolved, so only a provider's files count as theirs.
+            if record.source.provider != nil { protectedURLs.insert(url) }
+        }
+        let inUse = Set(installedRecords.compactMap { $0.face.fileURL?.standardizedFileURL })
+        return namesByURL.map { url, names in
+            let cached = fileCache[url]
+            let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey, .contentModificationDateKey])
+            let scope = CTFontManagerGetScopeForURL(url as CFURL)
+            let isInFolder = folders.contains(where: { url.isContained(in: $0) })
+            let isActive = inUse.contains(url) || scope != .none
+            // A copy TypeCase activated from a folder can be turned off; one
+            // installed or loaded some other way stays.
+            let activatedHere = scope == .user && isInFolder
+                && !(cached?.descriptorNames ?? names).isDisjoint(with: activeManagedNames)
+            let isMovable = values?.isRegularFile == true && values?.isSymbolicLink != true
+                && url.resolvingSymlinksInPath() == url && FileManager.default.isDeletableFile(atPath: url.path)
+            let reason: String?
+            if isActive && !activatedHere {
+                reason = String(localized: "In Use")
+            } else if protectedURLs.contains(url) || !isInFolder {
+                reason = String(localized: "Managed by another app")
+            } else if cached == nil || !isMovable {
+                reason = String(localized: "Unavailable")
+            } else {
+                reason = nil
+            }
+            // The person may unlock a copy in use that sits in one of their
+            // folders or in ~/Library/Fonts; a provider's or the system's stays.
+            // The sandbox can move a ~/Library/Fonts file only once that
+            // folder is added, which isMovable reflects.
+            let isUnlockable = reason != nil && isActive && !activatedHere && isMovable
+                && !protectedURLs.contains(url)
+                && (isInFolder || url.isContained(in: Self.userFontsFolder))
+            return DuplicateCleanupFile(
+                url: url, names: cached?.descriptorNames ?? names, protectionReason: reason,
+                size: Int64(values?.fileSize ?? 0), modified: values?.contentModificationDate,
+                isActive: isActive, isUnlockable: isUnlockable,
+                needsFolderAccess: reason != nil && !isInFolder && !isMovable && values?.isRegularFile == true
+                    && !protectedURLs.contains(url) && url.isContained(in: Self.userFontsFolder)
+            )
+        }.sorted { $0.url.path < $1.url.path }
+    }
+
+    /// Revalidates the reviewed files and the unique-face warning immediately
+    /// before moving anything. Active copies are unregistered file by file,
+    /// leaving the remembered activation of their faces to the copy that stays.
+    func trashDuplicateFiles(
+        _ selected: Set<URL>, unlocked: Set<URL> = [], reviewed: [DuplicateCleanupFile]
+    ) async throws {
+        let changed = NSError(domain: "TypeCase.DuplicateCleanup", code: 1, userInfo: [
+            NSLocalizedDescriptionKey: String(localized: "The font files changed. Review the list again before cleaning up.")
+        ])
+        guard !isLoading, !isUpdatingActivation else { throw changed }
+        let files = DuplicateCleanupPolicy.unlocking(unlocked, in: duplicateCleanupFiles())
+        guard DuplicateCleanupPolicy.canRemove(selected, from: files),
+              DuplicateCleanupPolicy.missingNames(afterRemoving: selected, from: files)
+                == DuplicateCleanupPolicy.missingNames(afterRemoving: selected, from: reviewed),
+              selected.allSatisfy({ url in files.first(where: { $0.url == url }) == reviewed.first(where: { $0.url == url }) })
+        else { throw changed }
+
+        func currentNames(at url: URL) -> Set<String> {
+            let descriptors = CTFontManagerCreateFontDescriptorsFromURL(url as CFURL) as? [CTFontDescriptor] ?? []
+            return Set(descriptors.compactMap { CTFontDescriptorCopyAttribute($0, kCTFontNameAttribute) as? String })
+        }
+        let removing = files.filter { selected.contains($0.url) }
+        for file in removing {
+            guard currentNames(at: file.url) == file.names else { throw changed }
+        }
+
+        // Not through applyActivation: that records the faces as off, and the
+        // surviving copy shares their names.
+        // Only registered copies are turned off and, on failure, back on. An
+        // installed one in ~/Library/Fonts goes out of use when it moves.
+        let active = removing.filter { $0.isActive && CTFontManagerGetScopeForURL($0.url as CFURL) == .user }
+        func register(_ enabled: Bool, _ files: [DuplicateCleanupFile]) async -> [FontRegistrationOutcome] {
+            guard !files.isEmpty else { return [] }
+            let actions = files.map {
+                FontRegistrationAction(url: $0.url, names: $0.names, enabled: enabled, skipIfAlreadyScoped: true)
+            }
+            let outcomes = await registrationQueue.enqueue { [registrar] in await registrar.synchronize(actions) }
+            let urls = Set(files.map(\.url))
+            await coverage.invalidate(urls: urls)
+            FontResolver.shared.invalidate(names: Set(files.flatMap(\.names)), urls: urls)
+            return outcomes
+        }
+
+        var moved: Set<URL> = []
+        // Whatever stays behind is turned back on, so a failure leaves the
+        // library as it was.
+        defer {
+            if !active.isEmpty || !moved.isEmpty {
+                let restore = active.filter { !moved.contains($0.url) }
+                Task { @MainActor in
+                    _ = await register(true, restore)
+                    refresh()
+                }
+            }
+        }
+        if let failure = await register(false, active).first(where: { !$0.succeeded }) {
+            throw NSError(domain: "TypeCase.DuplicateCleanup", code: 2, userInfo: [
+                NSLocalizedDescriptionKey: failure.errorDescription ?? failure.url.lastPathComponent
+            ])
+        }
+        // An installed copy still resolves until it moves; every other copy
+        // must already be out of Core Text's way.
+        let registered = Set(active.map(\.url))
+        for file in removing where !file.isActive || registered.contains(file.url) {
+            for name in file.names {
+                let font = CTFontCreateWithName(name as CFString, 12, nil)
+                let resolved = CTFontCopyAttribute(font, kCTFontURLAttribute) as? URL
+                guard resolved?.standardizedFileURL != file.url else { throw changed }
+            }
+        }
+        for file in removing {
+            try FileManager.default.trashItem(at: file.url, resultingItemURL: nil)
+            moved.insert(file.url)
+        }
     }
 
     /// Puts the given file paths on the general pasteboard, one per line.
@@ -791,6 +938,7 @@ final class FontCatalog: ObservableObject {
             // files must not keep their cached character sets or metadata.
             let changedFiles = Set(output.changedFiles)
             metadataCache.removeAll()
+            variableInfoCache.removeAll()
             Task { await coverage.invalidate(urls: changedFiles) }
         }
 
@@ -1120,6 +1268,23 @@ final class FontCatalog: ObservableObject {
             )
         }.value
     }
+
+    /// A face's variable axes and its own coordinates, or nil for a static
+    /// face. Cached per face, so expanding a list row again reads nothing.
+    func variableInfo(for face: FontFace) async -> VariableFontInfo? {
+        if let cached = variableInfoCache[face.postScriptName] { return cached }
+        let info = await Task.detached(priority: .userInitiated) {
+            FontResolver.backgroundVariableInfo(
+                postScriptName: face.postScriptName, fileURL: face.fileURL, size: FontCatalog.variableInfoSize
+            )
+        }.value
+        variableInfoCache[face.postScriptName] = info
+        return info
+    }
+
+    /// The point size cached axis values are read at; optical-size axes
+    /// report their coordinate for this size.
+    nonisolated static let variableInfoSize: CGFloat = 40
 
     /// A face's descriptive metadata, read from its font file off the main
     /// thread and cached per file. Returns nil when the file cannot be read.

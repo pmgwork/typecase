@@ -721,7 +721,15 @@ struct NewMixedPairButton: View {
             draft.begin(with: catalog.defaultMixedPairFamilies(), from: NSApp.keyWindow)
             openWindow(id: MixedPairWindow.id)
         } label: {
-            Label(String(localized: "Mixed Font"), systemImage: "rectangle.on.rectangle")
+            // The toolbar draws nothing for a custom symbol named in the
+            // asset catalog, so it gets the symbol as an AppKit image.
+            Label {
+                Text(String(localized: "Mixed Font"))
+            } icon: {
+                if let symbol = NSImage(named: "mixed.font") {
+                    Image(nsImage: symbol)
+                }
+            }
         }
         .help(String(localized: "Create a mixed-font pair"))
     }

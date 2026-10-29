@@ -95,6 +95,16 @@ private struct SidebarSettingsView: View {
                     isOn: $settings.showFavoritesSection
                 )
                 SidebarItemToggle(
+                    title: LibrarySection.mixed.title,
+                    icon: LibrarySection.mixed.icon,
+                    isOn: $settings.showMixedSection
+                )
+                SidebarItemToggle(
+                    title: LibrarySection.duplicates.title,
+                    icon: LibrarySection.duplicates.icon,
+                    isOn: $settings.showDuplicatesSection
+                )
+                SidebarItemToggle(
                     title: LibrarySection.system.title,
                     icon: LibrarySection.system.icon,
                     isOn: $settings.showSystemSection
@@ -103,16 +113,6 @@ private struct SidebarSettingsView: View {
                     title: LibrarySection.local.title,
                     icon: LibrarySection.local.icon,
                     isOn: $settings.showLocalSection
-                )
-                SidebarItemToggle(
-                    title: LibrarySection.duplicates.title,
-                    icon: LibrarySection.duplicates.icon,
-                    isOn: $settings.showDuplicatesSection
-                )
-                SidebarItemToggle(
-                    title: LibrarySection.mixed.title,
-                    icon: LibrarySection.mixed.icon,
-                    isOn: $settings.showMixedSection
                 )
                 ForEach(catalog.availableProviders) { provider in
                     SidebarItemToggle(

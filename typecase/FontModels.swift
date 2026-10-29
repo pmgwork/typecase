@@ -252,8 +252,8 @@ nonisolated struct LibrarySection: Hashable, Identifiable, Sendable {
         case .favorites: return .symbol("star")
         case .system: return .symbol("macbook")
         case .local: return .symbol("folder")
-        case .mixed: return .symbol("rectangle.on.rectangle")
-        case .duplicates: return .symbol("square.on.square")
+        case .mixed: return .customSymbol("mixed.font")
+        case .duplicates: return .customSymbol("font.duplicate")
         default: return .symbol("textformat")
         }
     }
