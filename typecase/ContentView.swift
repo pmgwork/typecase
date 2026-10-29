@@ -10,6 +10,22 @@ struct ContentView: View {
     @State private var inspectorVisible = true
     @State private var comparisonVisible = false
     @State private var window: NSWindow?
+    @State private var searchFocused = false
+    @State private var isFullScreen = false
+
+    private var toolbarColor: Color {
+        settings.previewBackgroundColor ?? Color(nsColor: .windowBackgroundColor)
+    }
+
+    /// AppKit hosts the full-screen toolbar in a window of its own, which
+    /// SwiftUI's toolbar background does not reach; it shows black behind
+    /// the hidden toolbar background unless it is painted directly.
+    private func paintFullScreenToolbar() {
+        let color = NSColor(toolbarColor)
+        for candidate in NSApp.windows where String(describing: type(of: candidate)).contains("ToolbarFullScreenWindow") {
+            candidate.backgroundColor = color
+        }
+    }
 
     var body: some View {
         NavigationSplitView(columnVisibility: $columnVisibility) {
@@ -28,7 +44,23 @@ struct ContentView: View {
         .navigationTitle("TypeCase")
         // Preserve the principal region so trailing controls stay right-aligned.
         .toolbarTitleDisplayMode(.inline)
+        // In full screen the toolbar moves to a window of its own; a visible
+        // SwiftUI toolbar background draws the system material there instead
+        // of the canvas color, so the background stays hidden and that window
+        // is painted directly (see paintFullScreenToolbar).
         .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.willEnterFullScreenNotification)) { note in
+            if note.object as? NSWindow === window { isFullScreen = true }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didEnterFullScreenNotification)) { _ in
+            paintFullScreenToolbar()
+        }
+        .onChange(of: settings.previewBackgroundColor) {
+            if isFullScreen { paintFullScreenToolbar() }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.willExitFullScreenNotification)) { note in
+            if note.object as? NSWindow === window { isFullScreen = false }
+        }
         // Keep the window's minimum size independent of sidebar and inspector visibility.
         // Otherwise AppKit changes the window frame when a split-view column is restored.
         // The width fits every column at its minimum: 190 + 480 + 280.
@@ -89,11 +121,22 @@ struct ContentView: View {
             ToolbarSpacer(.fixed, placement: .confirmationAction)
 
             ToolbarItem(placement: .confirmationAction) {
-                ToolbarSearchField(text: $viewState.searchText)
+                ToolbarSearchField(text: $viewState.searchText, isFocused: $searchFocused)
                     .frame(width: 220)
                     .padding(.horizontal, 8)
                     .frame(height: 36)
                     .glassEffect(.regular, in: .capsule)
+                    // The field's own focus ring follows its inner bezel, not
+                    // the capsule, so the capsule draws the focus instead.
+                    .overlay {
+                        Capsule()
+                            .strokeBorder(Color.accentColor.opacity(searchFocused ? 0.8 : 0), lineWidth: 3)
+                            .animation(.easeOut(duration: 0.15), value: searchFocused)
+                            .allowsHitTesting(false)
+                    }
+                    // The fixed toolbar spacer leaves a narrower gap than the
+                    // leading items' 8 pt; this matches them.
+                    .padding(.leading, 4)
             }
             .sharedBackgroundVisibility(.hidden)
         }
@@ -160,13 +203,15 @@ struct ContentView: View {
 /// is too wide for this library and sits at the trailing edge.
 private struct ToolbarSearchField: NSViewRepresentable {
     @Binding var text: String
+    @Binding var isFocused: Bool
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(text: $text)
+        Coordinator(text: $text, isFocused: $isFocused)
     }
 
-    func makeNSView(context: Context) -> NSSearchField {
-        let field = NSSearchField()
+    func makeNSView(context: Context) -> FocusReportingSearchField {
+        let field = FocusReportingSearchField()
+        field.onFocus = { [coordinator = context.coordinator] in coordinator.isFocused.wrappedValue = true }
         field.placeholderString = String(localized: "Search")
         field.delegate = context.coordinator
         field.sendsSearchStringImmediately = true
@@ -174,21 +219,43 @@ private struct ToolbarSearchField: NSViewRepresentable {
         // notification; they only send the action.
         field.target = context.coordinator
         field.action = #selector(Coordinator.searchChanged(_:))
+        // The ring follows the field's inner bezel rather than the glass
+        // capsule around it, so the capsule draws the focus instead.
+        field.focusRingType = .none
         return field
     }
 
-    func updateNSView(_ field: NSSearchField, context: Context) {
+    func updateNSView(_ field: FocusReportingSearchField, context: Context) {
         context.coordinator.text = $text
+        context.coordinator.isFocused = $isFocused
         if field.stringValue != text {
             field.stringValue = text
         }
     }
 
+    /// Reports a click into the field; AppKit's begin-editing notice waits
+    /// for the first keystroke.
+    final class FocusReportingSearchField: NSSearchField {
+        var onFocus: (() -> Void)?
+
+        override func becomeFirstResponder() -> Bool {
+            let became = super.becomeFirstResponder()
+            if became { onFocus?() }
+            return became
+        }
+    }
+
     final class Coordinator: NSObject, NSSearchFieldDelegate {
         var text: Binding<String>
+        var isFocused: Binding<Bool>
 
-        init(text: Binding<String>) {
+        init(text: Binding<String>, isFocused: Binding<Bool>) {
             self.text = text
+            self.isFocused = isFocused
+        }
+
+        func controlTextDidEndEditing(_ notification: Notification) {
+            isFocused.wrappedValue = false
         }
 
         func controlTextDidChange(_ notification: Notification) {
@@ -208,8 +275,6 @@ private struct ToolbarSearchField: NSViewRepresentable {
 /// Also used by the mixed-pair window for its own specimen size.
 struct PreviewSizeControl: View {
     @Binding var size: Double
-    @State private var sizeText = ""
-    @FocusState private var isEditingSize: Bool
 
     /// A continuous slider keeps the system from drawing step tick marks below
     /// the track; the value still snaps to whole points.
@@ -231,25 +296,13 @@ struct PreviewSizeControl: View {
                 .labelsHidden()
                 .frame(width: 96)
                 .accessibilityLabel(String(localized: "Preview size"))
+                // Double-clicking the slider returns to the default, as in
+                // many design apps; the context menu offers the same.
+                .simultaneousGesture(TapGesture(count: 2).onEnded { resetSize() })
 
             HStack(spacing: 3) {
-                // No visible title; a String keeps it out of the string catalog.
-                TextField(String(), text: $sizeText)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 11).monospacedDigit())
-                    .foregroundStyle(.primary)
-                    .multilineTextAlignment(.trailing)
-                    .frame(width: 24)
-                    .focused($isEditingSize)
-                    .accessibilityLabel(String(localized: "Preview size"))
-                    .onSubmit {
-                        commitSize()
-                        isEditingSize = false
-                    }
-                    .onExitCommand {
-                        sizeText = String(Int(size))
-                        isEditingSize = false
-                    }
+                PointSizeField(size: $size)
+                    .frame(width: 15, height: 14)
                 Text(verbatim: "pt")
                     .font(.system(size: 10))
             }
@@ -261,18 +314,72 @@ struct PreviewSizeControl: View {
         .fixedSize(horizontal: true, vertical: false)
         .glassEffect(.regular, in: .capsule)
         .help(String(localized: "Preview size: \(Int(size)) pt"))
-        .onAppear { sizeText = String(Int(size)) }
-        .onChange(of: size) { _, value in sizeText = String(Int(value)) }
-        .onChange(of: isEditingSize) { _, editing in
-            if !editing { commitSize() }
+        .contextMenu {
+            Button(String(localized: "Reset to Default Size (\(Int(AppSettings.defaultPreviewSize)) pt)")) {
+                resetSize()
+            }
+            .disabled(size == AppSettings.defaultPreviewSize)
         }
     }
 
-    private func commitSize() {
-        if let value = Double(sizeText), value.isFinite {
-            size = min(max(value.rounded(), AppSettings.previewSizeRange.lowerBound), AppSettings.previewSizeRange.upperBound)
+    private func resetSize() {
+        size = AppSettings.defaultPreviewSize
+    }
+}
+
+/// The preview size as a typed number. An AppKit field draws its text and its
+/// field editor in the same frame; SwiftUI's plain field sets the edited text
+/// a little apart from the resting text. Return or leaving the field commits a
+/// size clamped to the slider's range, and Escape restores the current size.
+private struct PointSizeField: NSViewRepresentable {
+    @Binding var size: Double
+
+    func makeCoordinator() -> Coordinator { Coordinator(size: $size) }
+
+    func makeNSView(context: Context) -> NSTextField {
+        let field = NSTextField()
+        field.isBordered = false
+        field.drawsBackground = false
+        field.focusRingType = .none
+        field.font = .monospacedDigitSystemFont(ofSize: 11, weight: .regular)
+        field.textColor = .labelColor
+        field.cell?.usesSingleLineMode = true
+        field.cell?.isScrollable = true
+        field.delegate = context.coordinator
+        field.setAccessibilityLabel(String(localized: "Preview size"))
+        return field
+    }
+
+    func updateNSView(_ field: NSTextField, context: Context) {
+        context.coordinator.size = $size
+        let text = String(Int(size))
+        if field.currentEditor() == nil, field.stringValue != text {
+            field.stringValue = text
         }
-        sizeText = String(Int(size))
+    }
+
+    final class Coordinator: NSObject, NSTextFieldDelegate {
+        var size: Binding<Double>
+
+        init(size: Binding<Double>) {
+            self.size = size
+        }
+
+        func controlTextDidEndEditing(_ notification: Notification) {
+            guard let field = notification.object as? NSTextField else { return }
+            if let value = Double(field.stringValue), value.isFinite {
+                size.wrappedValue = min(max(value.rounded(), AppSettings.previewSizeRange.lowerBound),
+                                        AppSettings.previewSizeRange.upperBound)
+            }
+            field.stringValue = String(Int(size.wrappedValue))
+        }
+
+        func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
+            guard selector == #selector(NSResponder.cancelOperation(_:)) else { return false }
+            textView.string = String(Int(size.wrappedValue))
+            control.window?.makeFirstResponder(nil)
+            return true
+        }
     }
 }
 

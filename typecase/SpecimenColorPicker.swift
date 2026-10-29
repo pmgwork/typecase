@@ -1,7 +1,7 @@
 import AppKit
 import SwiftUI
 
-/// Shared by the toolbar and Settings. Presentation stays attached to its button.
+/// The toolbar's specimen color controls. Presentation stays attached to its button.
 struct SpecimenColorPicker<Label: View>: View {
     @Binding var color: Color?
     let fallback: Color
@@ -21,6 +21,7 @@ struct SpecimenColorPicker<Label: View>: View {
 }
 
 private struct SpecimenColorPopover: View {
+    @EnvironmentObject private var settings: AppSettings
     @Binding var color: Color?
     let fallback: Color
     let title: String
@@ -62,6 +63,19 @@ private struct SpecimenColorPopover: View {
             }
             .controlSize(.small)
             .disabled(color == nil)
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            Divider()
+
+            // Presets set both specimen colors at once.
+            HStack {
+                Button(String(localized: "System")) { settings.setPreviewColors(background: nil, text: nil) }
+                Button(String(localized: "Light")) { settings.setPreviewColors(background: .white, text: .black) }
+                Button(String(localized: "Dark")) {
+                    settings.setPreviewColors(background: Color(red: 0.11, green: 0.11, blue: 0.12), text: .white)
+                }
+            }
+            .controlSize(.small)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(20)

@@ -5,6 +5,7 @@
 //  Created by Yuto Chiba on 2026/09/15.
 //
 
+import AppKit
 import SwiftUI
 
 @main
@@ -14,8 +15,15 @@ struct typecaseApp: App {
     @StateObject private var settings = AppSettings()
     @StateObject private var mixedPairDraft = MixedPairDraft()
 
+    init() {
+        // The library is not a tabbed document window; without this, macOS
+        // adds Show Tab Bar and Show All Tabs to the View menu.
+        NSWindow.allowsAutomaticWindowTabbing = false
+    }
+
     var body: some Scene {
-        WindowGroup(id: LibraryWindows.id) {
+        // One library window: a second one adds nothing a font manager needs.
+        Window("TypeCase", id: LibraryWindows.id) {
             ContentView()
                 .environmentObject(catalog)
                 .environmentObject(settings)

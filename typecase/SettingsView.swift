@@ -162,48 +162,6 @@ private struct PreviewSettingsView: View {
 
     var body: some View {
         Form {
-            Section(String(localized: "Size")) {
-                LabeledContent(String(localized: "Preview size")) {
-                    HStack(spacing: 8) {
-                        Slider(value: $settings.previewSize, in: AppSettings.previewSizeRange, step: 1)
-                            .frame(width: 200)
-                        Text("\(Int(settings.previewSize)) pt")
-                            .monospacedDigit()
-                            .foregroundStyle(.secondary)
-                            .frame(width: 44, alignment: .trailing)
-                    }
-                }
-            }
-
-            Section {
-                LabeledContent(String(localized: "Background")) {
-                    colorControl($settings.previewBackgroundColor, fallback: Color(nsColor: .windowBackgroundColor), title: String(localized: "Background Color"))
-                }
-                LabeledContent(String(localized: "Text")) {
-                    colorControl($settings.previewTextColor, fallback: Color(nsColor: .labelColor), title: String(localized: "Text Color"))
-                }
-                HStack {
-                    Button(String(localized: "System")) {
-                        settings.setPreviewColors(background: nil, text: nil)
-                    }
-                    Button(String(localized: "Light")) {
-                        settings.setPreviewColors(background: .white, text: .black)
-                    }
-                    Button(String(localized: "Dark")) {
-                        settings.setPreviewColors(
-                            background: Color(red: 0.11, green: 0.11, blue: 0.12),
-                            text: .white
-                        )
-                    }
-                }
-            } header: {
-                Text(String(localized: "Colors"))
-            } footer: {
-                Text(String(localized: "Applies to font specimens. Shared with the toolbar color controls. Choose System to follow the macOS appearance."))
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-            }
-
             Section {
                 ForEach(FontLanguage.allCases) { language in
                     TextField(
@@ -222,7 +180,7 @@ private struct PreviewSettingsView: View {
             }
         }
         .formStyle(.grouped)
-        .frame(height: 600)
+        .frame(height: 360)
     }
 
     private func sampleTextBinding(_ language: FontLanguage) -> Binding<String> {
@@ -230,17 +188,6 @@ private struct PreviewSettingsView: View {
             get: { settings.sampleText(for: language) },
             set: { settings.setSampleText($0, for: language) }
         )
-    }
-}
-
-private func colorControl(_ color: Binding<Color?>, fallback: Color, title: String) -> some View {
-    SpecimenColorPicker(color: color, fallback: fallback, title: title) {
-        RoundedRectangle(cornerRadius: 5)
-            .fill(color.wrappedValue ?? fallback)
-            .frame(width: 32, height: 22)
-            .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(.primary.opacity(0.2)))
-            .padding(3)
-            .contentShape(.rect)
     }
 }
 

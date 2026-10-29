@@ -11,6 +11,7 @@ final class AppSettings: ObservableObject {
         didSet { appLanguage.save(to: defaults) }
     }
 
+    static let defaultPreviewSize: Double = 32
     static let previewSizeRange: ClosedRange<Double> = 18...72
 
     @Published var previewSize: Double {
@@ -77,7 +78,7 @@ final class AppSettings: ObservableObject {
 
     init() {
         appLanguage = AppLanguage.load(from: defaults, domain: Bundle.main.bundleIdentifier ?? "pmgwork.typecase")
-        let storedSize = defaults.object(forKey: Key.previewSize) as? Double ?? 32
+        let storedSize = defaults.object(forKey: Key.previewSize) as? Double ?? Self.defaultPreviewSize
         previewSize = min(max(storedSize, Self.previewSizeRange.lowerBound), Self.previewSizeRange.upperBound)
         sampleTexts = Self.loadSampleTexts(defaults: defaults)
         previewBackgroundColor = defaults.string(forKey: Key.previewBackgroundColor)
