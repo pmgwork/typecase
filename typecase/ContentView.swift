@@ -160,7 +160,16 @@ struct ContentView: View {
         }
         .background(WindowAccessor {
             window = $0
-            if let window = $0 { LibraryWindows.register(window) }
+            if let window = $0 {
+                LibraryWindows.register(window)
+                // The toolbar holds custom controls with no labels, so it stays
+                // icon-only and offers no Icon and Text choice. SwiftUI attaches
+                // the toolbar after the window, hence the next turn.
+                DispatchQueue.main.async {
+                    window.toolbar?.allowsDisplayModeCustomization = false
+                    window.toolbar?.displayMode = .iconOnly
+                }
+            }
         })
         .onChange(of: catalog.isLoading) { _, loading in
             if !loading { viewState.reconcileDestination(with: catalog, settings: settings) }
