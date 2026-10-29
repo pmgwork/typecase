@@ -22,39 +22,19 @@ nonisolated struct FontSource: RawRepresentable, Hashable, Codable, Identifiable
 
     var title: String {
         if let provider { return provider.title }
-        return self == .local ? "Local" : "System"
+        return self == .local ? String(localized: "Local") : String(localized: "System")
     }
 
     var shortTitle: String {
         if let provider { return provider.shortTitle }
-        return self == .local ? "Local" : "OS"
+        return self == .local ? String(localized: "Local") : "OS"
     }
 
     var managementHint: String {
         if let provider { return provider.managementHint }
         return self == .local
-            ? "Added folder — use the radio button to activate or deactivate"
-            : "Installed on this Mac — deactivate it in Font Book"
-    }
-}
-
-nonisolated enum FontCategory: String, Codable, CaseIterable, Identifiable, Sendable {
-    case sansSerif
-    case serif
-    case monospaced
-    case display
-    case unclassified
-
-    var id: String { rawValue }
-
-    var title: String {
-        switch self {
-        case .sansSerif: "Sans Serif"
-        case .serif: "Serif"
-        case .monospaced: "Monospaced"
-        case .display: "Display"
-        case .unclassified: "Unclassified"
-        }
+            ? String(localized: "Added folder — use the radio button to activate or deactivate")
+            : String(localized: "Installed on this Mac — deactivate it in Font Book")
     }
 }
 
@@ -127,11 +107,8 @@ nonisolated struct FontFamily: Identifiable, Hashable, Sendable {
     let localizedNames: [FontLanguage: String]
     let manufacturer: String
     let source: FontSource
-    /// The effective classification: the user's override, or the detected one.
+    /// Automatically detected from the font's metadata, names, and outlines.
     let category: FontCategory
-    /// The classification detected from the font file's traits, kept so the
-    /// inspector can show what the user's override replaced.
-    let detectedCategory: FontCategory
     let faces: [FontFace]
 
     /// The display name: the family's name in its highest-priority language,
@@ -197,6 +174,28 @@ nonisolated struct FontFamily: Identifiable, Hashable, Sendable {
     }
 }
 
+/// One file that provides a face whose PostScript name another file also uses.
+nonisolated struct FontFileCopy: Identifiable, Hashable, Sendable {
+    let url: URL
+    let source: FontSource
+    /// Whether this is the file Core Text resolved the name to at the last
+    /// scan, i.e. the copy applications get when they ask for the name.
+    let isInUse: Bool
+
+    var id: URL { url }
+}
+
+/// A face whose PostScript name is provided by more than one font file. Apps
+/// address fonts by that name, so only one of the copies can be used.
+nonisolated struct FontDuplicate: Identifiable, Hashable, Sendable {
+    let postScriptName: String
+    let styleName: String
+    /// The copies in a stable order: the one in use first, then by path.
+    let copies: [FontFileCopy]
+
+    var id: String { postScriptName }
+}
+
 nonisolated struct FontFolderNode: Identifiable, Hashable, Codable, Sendable {
     let url: URL
     let children: [FontFolderNode]?
@@ -216,6 +215,8 @@ nonisolated struct LibrarySection: Hashable, Identifiable, Sendable {
     static let local = LibrarySection(rawValue: "local")
     /// The saved Japanese + Latin combinations.
     static let mixed = LibrarySection(rawValue: "mixed")
+    /// Families with a face that more than one font file provides.
+    static let duplicates = LibrarySection(rawValue: "duplicates")
 
     static func provider(_ provider: FontProvider) -> LibrarySection {
         LibrarySection(rawValue: provider.id)
@@ -228,17 +229,18 @@ nonisolated struct LibrarySection: Hashable, Identifiable, Sendable {
     /// Whether this raw value names a section this build can show. A persisted
     /// selection from an older or newer build must not become a blank row.
     var isKnown: Bool {
-        provider != nil || [.all, .favorites, .system, .local, .mixed].contains(self)
+        provider != nil || [.all, .favorites, .system, .local, .mixed, .duplicates].contains(self)
     }
 
     var title: String {
         if let provider { return provider.title }
         switch self {
-        case .all: return "All Fonts"
-        case .favorites: return "Favorites"
-        case .system: return "System Fonts"
-        case .local: return "Local Library"
-        case .mixed: return "Mixed Fonts"
+        case .all: return String(localized: "All Fonts")
+        case .favorites: return String(localized: "Favorites")
+        case .system: return String(localized: "System Fonts")
+        case .local: return String(localized: "Local Library")
+        case .mixed: return String(localized: "Mixed Fonts")
+        case .duplicates: return String(localized: "Duplicates")
         default: return rawValue
         }
     }
@@ -250,7 +252,8 @@ nonisolated struct LibrarySection: Hashable, Identifiable, Sendable {
         case .favorites: return .symbol("star")
         case .system: return .symbol("macbook")
         case .local: return .symbol("folder")
-        case .mixed: return .symbol("rectangle.on.rectangle")
+        case .mixed: return .customSymbol("mixed.font")
+        case .duplicates: return .customSymbol("font.duplicate")
         default: return .symbol("textformat")
         }
     }
@@ -275,8 +278,8 @@ enum SystemFontScope: String, CaseIterable, Hashable {
     var title: String {
         switch self {
         case .user: Self.homeDirectory.lastPathComponent
-        case .allUsers: "All Users"
-        case .system: "System"
+        case .allUsers: String(localized: "All Users")
+        case .system: String(localized: "System")
         }
     }
 
@@ -311,7 +314,13 @@ enum ActivationFilter: String, CaseIterable, Identifiable {
     case disabled
 
     var id: String { rawValue }
-    var title: String { rawValue.capitalized }
+    var title: String {
+        switch self {
+        case .all: String(localized: "All")
+        case .enabled: String(localized: "Enabled")
+        case .disabled: String(localized: "Disabled")
+        }
+    }
 }
 
 nonisolated extension URL {

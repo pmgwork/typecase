@@ -1,7 +1,7 @@
 import AppKit
 import SwiftUI
 
-/// Shared by the toolbar and Settings. Presentation stays attached to its button.
+/// The toolbar's specimen color controls. Presentation stays attached to its button.
 struct SpecimenColorPicker<Label: View>: View {
     @Binding var color: Color?
     let fallback: Color
@@ -21,6 +21,7 @@ struct SpecimenColorPicker<Label: View>: View {
 }
 
 private struct SpecimenColorPopover: View {
+    @EnvironmentObject private var settings: AppSettings
     @Binding var color: Color?
     let fallback: Color
     let title: String
@@ -56,12 +57,25 @@ private struct SpecimenColorPopover: View {
                 .font(.headline)
                 .frame(maxWidth: .infinity, alignment: .leading)
             picker
-            Button("Use System Color") {
+            Button(String(localized: "Use System Color")) {
                 color = nil
                 synchronize()
             }
             .controlSize(.small)
             .disabled(color == nil)
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            Divider()
+
+            // Presets set both specimen colors at once.
+            HStack {
+                Button(String(localized: "System")) { settings.setPreviewColors(background: nil, text: nil) }
+                Button(String(localized: "Light")) { settings.setPreviewColors(background: .white, text: .black) }
+                Button(String(localized: "Dark")) {
+                    settings.setPreviewColors(background: Color(red: 0.11, green: 0.11, blue: 0.12), text: .white)
+                }
+            }
+            .controlSize(.small)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(20)
@@ -102,12 +116,12 @@ private struct SpecimenColorPopover: View {
         .onKeyPress(.downArrow) { brightness = max(0, brightness - 0.02); publish(); return .handled }
         .accessibilityRepresentation {
             VStack {
-                Slider(value: componentBinding($hue), in: 0...1) { Text("Hue") }
-                Slider(value: componentBinding($saturation), in: 0...1) { Text("Saturation") }
-                Slider(value: componentBinding($brightness), in: 0...1) { Text("Brightness") }
+                Slider(value: componentBinding($hue), in: 0...1) { Text(String(localized: "Hue")) }
+                Slider(value: componentBinding($saturation), in: 0...1) { Text(String(localized: "Saturation")) }
+                Slider(value: componentBinding($brightness), in: 0...1) { Text(String(localized: "Brightness")) }
             }
         }
-        .help("Choose a color. Arrow keys adjust hue and brightness; Shift-arrow keys adjust saturation.")
+        .help(String(localized: "Choose a color. Arrow keys adjust hue and brightness; Shift-arrow keys adjust saturation."))
     }
 
     /// The hue wheel as a ring: the angular gradient starts at 3 o'clock and

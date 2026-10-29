@@ -7,6 +7,11 @@ import SwiftUI
 /// and the Settings scene.
 @MainActor
 final class AppSettings: ObservableObject {
+    @Published var appLanguage: AppLanguage {
+        didSet { appLanguage.save(to: defaults) }
+    }
+
+    static let defaultPreviewSize: Double = 32
     static let previewSizeRange: ClosedRange<Double> = 18...72
 
     @Published var previewSize: Double {
@@ -27,6 +32,9 @@ final class AppSettings: ObservableObject {
     }
     @Published var favoritesFirst: Bool {
         didSet { defaults.set(favoritesFirst, forKey: Key.favoritesFirst) }
+    }
+    @Published var activatedFirst: Bool {
+        didSet { defaults.set(activatedFirst, forKey: Key.activatedFirst) }
     }
     @Published var showAllSection: Bool {
         didSet { defaults.set(showAllSection, forKey: Key.showAllSection) }
@@ -50,6 +58,9 @@ final class AppSettings: ObservableObject {
     @Published var showMixedSection: Bool {
         didSet { defaults.set(showMixedSection, forKey: Key.showMixedSection) }
     }
+    @Published var showDuplicatesSection: Bool {
+        didSet { defaults.set(showDuplicatesSection, forKey: Key.showDuplicatesSection) }
+    }
     /// Per-face variable-axis adjustments, keyed by PostScript name and the
     /// four-character axis tag.
     @Published private(set) var variableAxes: [String: [String: Double]] {
@@ -66,7 +77,8 @@ final class AppSettings: ObservableObject {
     private let defaults = UserDefaults.standard
 
     init() {
-        let storedSize = defaults.object(forKey: Key.previewSize) as? Double ?? 32
+        appLanguage = AppLanguage.load(from: defaults, domain: Bundle.main.bundleIdentifier ?? "pmgwork.typecase")
+        let storedSize = defaults.object(forKey: Key.previewSize) as? Double ?? Self.defaultPreviewSize
         previewSize = min(max(storedSize, Self.previewSizeRange.lowerBound), Self.previewSizeRange.upperBound)
         sampleTexts = Self.loadSampleTexts(defaults: defaults)
         previewBackgroundColor = defaults.string(forKey: Key.previewBackgroundColor)
@@ -74,6 +86,7 @@ final class AppSettings: ObservableObject {
         previewTextColor = defaults.string(forKey: Key.previewTextColor)
             .flatMap(Color.init(specimenHex:))
         favoritesFirst = defaults.object(forKey: Key.favoritesFirst) as? Bool ?? false
+        activatedFirst = defaults.object(forKey: Key.activatedFirst) as? Bool ?? false
         showAllSection = defaults.object(forKey: Key.showAllSection) as? Bool ?? true
         showFavoritesSection = defaults.object(forKey: Key.showFavoritesSection) as? Bool ?? true
         showSystemSection = defaults.object(forKey: Key.showSystemSection) as? Bool ?? true
@@ -81,9 +94,12 @@ final class AppSettings: ObservableObject {
         providerSections = Self.loadProviderSections(defaults: defaults)
         showTagsSection = defaults.object(forKey: Key.showTagsSection) as? Bool ?? true
         showMixedSection = defaults.object(forKey: Key.showMixedSection) as? Bool ?? true
+        showDuplicatesSection = defaults.object(forKey: Key.showDuplicatesSection) as? Bool ?? true
         variableAxes = (defaults.dictionary(forKey: Key.variableAxes) as? [String: [String: Double]]) ?? [:]
         lastSelection = defaults.stringArray(forKey: Key.lastSelection) ?? []
         lastLocation = defaults.string(forKey: Key.lastLocation) ?? ""
+        // The removed PlayGround stored its pages here.
+        Key.removedPlayground.forEach(defaults.removeObject(forKey:))
     }
 
     // MARK: - Preview
@@ -118,7 +134,7 @@ final class AppSettings: ObservableObject {
     /// The built-in mixed specimen, shown while the preview text field is
     /// empty. It mixes Japanese, English, digits, and symbols so each part's
     /// width and balance can be compared.
-    static let mixedSampleDefault = "Typography は、文字を読むための技術であり、Design の一部でもあります。日本語・English・0123456789 に加えて、「」『』（）［］！？：；、。& / + − = % ¥ $ @ # などの記号が混ざると、Font ごとの字幅やバランスを確認しやすくなります。"
+    static let mixedSampleDefault = "Typographyは、文字を読むための技術であり、Designの一部でもあります。日本語・English・0123456789に加えて、「」『』（）［］！？：；、。& / + − = % ¥ $ @ # などの記号が混ざると、Fontごとの字幅やバランスを確認しやすくなります。"
 
     /// The text a mixed specimen shows: the entered text, or the mixed sample
     /// while the field is empty.
@@ -212,6 +228,7 @@ final class AppSettings: ObservableObject {
         if showAllSection { sections.append(.all) }
         if showFavoritesSection { sections.append(.favorites) }
         if showMixedSection { sections.append(.mixed) }
+        if showDuplicatesSection { sections.append(.duplicates) }
         if showSystemSection { sections.append(.system) }
         if showLocalSection { sections.append(.local) }
         for provider in FontProviderRegistry.all where isProviderSectionVisible(provider.id) {
@@ -230,6 +247,7 @@ final class AppSettings: ObservableObject {
             case .system: return showSystemSection
             case .local: return showLocalSection
             case .mixed: return showMixedSection
+            case .duplicates: return showDuplicatesSection
             default: return false
             }
         case .systemScope: return showSystemSection
@@ -307,9 +325,11 @@ final class AppSettings: ObservableObject {
         /// Keys used before the sample texts became per-language.
         static let legacyJapaneseSample = "japaneseSampleText"
         static let legacyLatinSample = "latinSampleText"
+        static let removedPlayground = ["playgroundLayouts", "playgroundCurrentLayout", "playgroundTypeScaleApplied"]
         static let previewBackgroundColor = "previewBackgroundColor"
         static let previewTextColor = "previewTextColor"
         static let favoritesFirst = "favoritesFirst"
+        static let activatedFirst = "activatedFirst"
         static let showAllSection = "showAllSection"
         static let showFavoritesSection = "showFavoritesSection"
         static let showSystemSection = "showSystemSection"
@@ -317,6 +337,7 @@ final class AppSettings: ObservableObject {
         static let providerSections = "providerSections"
         static let showTagsSection = "showTagsSection"
         static let showMixedSection = "showMixedSection"
+        static let showDuplicatesSection = "showDuplicatesSection"
         static let variableAxes = "variableAxes"
         static let lastSelection = "lastSelection"
         static let lastLocation = "lastLocation"

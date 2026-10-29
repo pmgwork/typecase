@@ -24,11 +24,11 @@ nonisolated enum FontLanguage: String, CaseIterable, Hashable, Identifiable, Cod
     /// The language's name in the interface and the inspector.
     var title: String {
         switch self {
-        case .japanese: "Japanese"
-        case .simplifiedChinese: "Simplified Chinese"
-        case .traditionalChinese: "Traditional Chinese"
-        case .korean: "Korean"
-        case .latin: "Latin / Other"
+        case .japanese: String(localized: "Japanese")
+        case .simplifiedChinese: String(localized: "Simplified Chinese")
+        case .traditionalChinese: String(localized: "Traditional Chinese")
+        case .korean: String(localized: "Korean")
+        case .latin: String(localized: "Latin / Other")
         }
     }
 

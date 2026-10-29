@@ -12,6 +12,8 @@ struct MixedFontPreview: View {
     /// The maximum number of lines, or nil to wrap the whole text.
     var lines: Int? = nil
     let fonts: [MixedScript: PreviewFaceSpec]
+    /// Tracking, tsume, and the Japanese–Latin space of the pair.
+    var typesetting = TypesettingOptions()
     /// The specimen colors chosen from the toolbar. `nil` keeps the system
     /// colors, so the window and list surfaces stay native.
     var backgroundColor: Color? = nil
@@ -37,13 +39,22 @@ struct MixedFontPreview: View {
     @ViewBuilder
     private var mixedText: some View {
         if let lines {
-            Text(MixedText.attributed(text, fonts: resolvedFonts))
+            Text(attributedText)
                 .lineLimit(lines)
                 .truncationMode(.tail)
                 .frame(height: size * 1.5 * CGFloat(lines), alignment: .leading)
         } else {
-            Text(MixedText.attributed(text, fonts: resolvedFonts))
+            Text(attributedText)
         }
+    }
+
+    private var attributedText: AttributedString {
+        var attributed = MixedText.attributed(text, fonts: resolvedFonts)
+        let ctFonts = typesetting.adjustsSpacing ? MixedText.ctFonts(for: fonts, size: size) : [:]
+        CharacterSpacing.apply(to: &attributed, size: size, options: typesetting) { character in
+            MixedText.font(for: MixedText.script(of: character), in: ctFonts)
+        }
+        return attributed
     }
 
     /// The drawable fonts of the mix. A face that cannot be drawn is left out,
@@ -61,7 +72,8 @@ struct MixedFontPreview: View {
             postScriptName: spec.postScriptName,
             fileURL: spec.fileURL,
             size: size,
-            variations: spec.variations
+            variations: spec.variations,
+            features: spec.features
         )
     }
 }
@@ -75,6 +87,7 @@ struct MixedTextEditor: View {
     let placeholder: String
     let size: CGFloat
     let fonts: [MixedScript: PreviewFaceSpec]
+    var typesetting = TypesettingOptions()
     var textColor: Color? = nil
 
     var body: some View {
@@ -84,15 +97,17 @@ struct MixedTextEditor: View {
                     text: placeholder,
                     size: size,
                     fonts: fonts,
+                    typesetting: typesetting,
                     textColor: textColor
                 )
                 .allowsHitTesting(false)
-                .opacity(0.45)
+                .opacity(0.7)
             }
             MixedTextViewRepresentable(
                 text: $text,
                 size: size,
                 fonts: fonts,
+                typesetting: typesetting,
                 textColor: textColor
             )
         }
@@ -107,6 +122,7 @@ private struct MixedTextViewRepresentable: NSViewRepresentable {
     @Binding var text: String
     let size: CGFloat
     let fonts: [MixedScript: PreviewFaceSpec]
+    var typesetting = TypesettingOptions()
     var textColor: Color? = nil
 
     func makeNSView(context: Context) -> NSScrollView {
@@ -145,7 +161,7 @@ private struct MixedTextViewRepresentable: NSViewRepresentable {
             textColor: textColor,
             force: true
         )
-        context.coordinator.lastKey = Self.configKey(size: size, textColor: textColor, fonts: fonts)
+        context.coordinator.lastKey = Self.configKey(size: size, textColor: textColor, fonts: fonts, typesetting: typesetting)
         return scroll
     }
 
@@ -163,7 +179,7 @@ private struct MixedTextViewRepresentable: NSViewRepresentable {
                 textColor: textColor,
                 force: true
             )
-            context.coordinator.lastKey = Self.configKey(size: size, textColor: textColor, fonts: fonts)
+            context.coordinator.lastKey = Self.configKey(size: size, textColor: textColor, fonts: fonts, typesetting: typesetting)
             let length = (textView.string as NSString).length
             textView.setSelectedRange(NSRange(
                 location: min(selected.location, length),
@@ -171,7 +187,7 @@ private struct MixedTextViewRepresentable: NSViewRepresentable {
             ))
             context.coordinator.isApplying = false
         } else {
-            let key = Self.configKey(size: size, textColor: textColor, fonts: fonts)
+            let key = Self.configKey(size: size, textColor: textColor, fonts: fonts, typesetting: typesetting)
             if key != context.coordinator.lastKey {
                 context.coordinator.applyMixedAttributes(
                     to: textView,
@@ -191,11 +207,18 @@ private struct MixedTextViewRepresentable: NSViewRepresentable {
 
     /// Identifies the appearance a config produces, so attribute work only
     /// reruns while the fonts, size, or color changed.
-    private static func configKey(size: CGFloat, textColor: Color?, fonts: [MixedScript: PreviewFaceSpec]) -> String {
-        var parts = [String(describing: size), String(describing: textColor)]
+    private static func configKey(
+        size: CGFloat,
+        textColor: Color?,
+        fonts: [MixedScript: PreviewFaceSpec],
+        typesetting: TypesettingOptions
+    ) -> String {
+        var parts = [String(describing: size), String(describing: textColor), String(describing: typesetting)]
         for script in MixedScript.allCases {
             if let spec = fonts[script] {
-                parts.append("\(script.rawValue)=\(spec.postScriptName)#\(spec.fileURL?.absoluteString ?? "-")")
+                let features = spec.features.keys.sorted().map { "\($0)=\(spec.features[$0] == true)" }
+                    .joined(separator: ",")
+                parts.append("\(script.rawValue)=\(spec.postScriptName)#\(spec.fileURL?.absoluteString ?? "-")#\(features)")
             }
         }
         return parts.joined(separator: "|")
@@ -229,7 +252,8 @@ private struct MixedTextViewRepresentable: NSViewRepresentable {
                 lastKey = MixedTextViewRepresentable.configKey(
                     size: parent.size,
                     textColor: parent.textColor,
-                    fonts: parent.fonts
+                    fonts: parent.fonts,
+                    typesetting: parent.typesetting
                 )
                 isApplying = false
             }
@@ -252,7 +276,8 @@ private struct MixedTextViewRepresentable: NSViewRepresentable {
                         postScriptName: spec.postScriptName,
                         fileURL: spec.fileURL,
                         size: size,
-                        variations: spec.variations
+                        variations: spec.variations,
+                        features: spec.features
                     )
                 }
                 let foreground: NSColor = textColor.map { NSColor($0) } ?? .labelColor
@@ -306,6 +331,21 @@ private struct MixedTextViewRepresentable: NSViewRepresentable {
                         [.font: font, .foregroundColor: foreground],
                         range: run.range
                     )
+                }
+                // Tsume and the Japanese–Latin space depend on each
+                // character's neighbors, so clear and recompute the kerning
+                // outside IME input.
+                if marked.location == NSNotFound {
+                    storage.removeAttribute(.kern, range: NSRange(location: 0, length: storage.length))
+                }
+                let ctFonts = resolved.mapValues { $0 as CTFont }
+                CharacterSpacing.apply(
+                    to: storage,
+                    size: size,
+                    options: parent.typesetting,
+                    skipping: marked
+                ) { character in
+                    MixedText.font(for: MixedText.script(of: character), in: ctFonts)
                 }
                 storage.endEditing()
                 _ = force

@@ -393,8 +393,9 @@ actor FontScanEngine {
             ?? declaredLanguages
         let localizedNames = (localization?.names ?? [:]).filter { languages.contains($0.key) }
         let traits = CTFontDescriptorCopyAttribute(descriptor, kCTFontTraitsAttribute) as? [CFString: Any]
-        let symbolic = (traits?[kCTFontSymbolicTrait] as? NSNumber)?.uint32Value ?? 0
-        let category = classify(family: family, style: style, symbolicTraits: symbolic)
+        let category = FontClassifier.classify(
+            font: font, family: family, localizedNames: Array(localizedNames.values)
+        )
         // Core Text normalizes weight to [-1, 1]; scale it so styles sort
         // light-to-heavy no matter where the face came from.
         let normalizedWeight = (traits?[kCTFontWeightTrait] as? NSNumber)?.doubleValue
@@ -455,26 +456,6 @@ actor FontScanEngine {
             return .provider(provider)
         }
         return managed ? .local : .system
-    }
-
-    nonisolated private static func classify(family: String, style: String, symbolicTraits: UInt32) -> FontCategory {
-        let searchable = "\(family) \(style)".lowercased()
-        if symbolicTraits & CTFontSymbolicTraits.traitMonoSpace.rawValue != 0 || searchable.contains("mono") {
-            return .monospaced
-        }
-        if searchable.contains("serif") || searchable.contains("明朝") || searchable.contains("宋")
-            || searchable.contains("myeongjo") || searchable.contains("batang") || searchable.contains("바탕") {
-            return .serif
-        }
-        if searchable.contains("sans") || searchable.contains("gothic") || searchable.contains("ゴシック")
-            || searchable.contains("黑") || searchable.contains("고딕") || searchable.contains("dotum")
-            || searchable.contains("돋움") {
-            return .sansSerif
-        }
-        if searchable.contains("display") || searchable.contains("script") || searchable.contains("decorative") {
-            return .display
-        }
-        return .unclassified
     }
 
     private func makeFolderTree(root: URL, fontFiles: [URL]) -> FontFolderNode {

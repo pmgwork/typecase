@@ -43,14 +43,14 @@ struct MixedPairRow: View, Equatable {
             HStack(spacing: 8) {
                 // The pair has no activation state; the mark keeps its name
                 // aligned with the font rows.
-                Image(systemName: "rectangle.on.rectangle")
+                Image("mixed.font")
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .frame(width: 16)
                 Text(name)
                     .font(.body.weight(.medium))
                     .lineLimit(1)
-                Text("\(pair.references.count) fonts")
+                Text(styleLabel)
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
@@ -64,7 +64,7 @@ struct MixedPairRow: View, Equatable {
                 if !isResolvable {
                     Image(systemName: "exclamationmark.triangle")
                         .foregroundStyle(.secondary)
-                        .help("One of the fonts is no longer in the library")
+                        .help(String(localized: "One of the fonts is no longer in the library"))
                 }
             }
             // Single-line like the font rows, so row heights stay constant.
@@ -73,6 +73,7 @@ struct MixedPairRow: View, Equatable {
                 size: previewSize,
                 lines: 1,
                 fonts: fonts,
+                typesetting: pair.options,
                 textColor: previewTextColor
             )
         }
@@ -94,6 +95,15 @@ struct MixedPairRow: View, Equatable {
         .help(name)
     }
 
+    /// The styles of the two named fonts (e.g. "W5 · Medium"), so pairs of the
+    /// same families in different weights read apart. Falls back to the font
+    /// count while neither style resolves.
+    private var styleLabel: String {
+        let styles = [MixedScript.japanese, .latin].compactMap { faces[$0]?.styleName }
+            .filter { !$0.isEmpty }
+        return styles.isEmpty ? String(localized: "\(pair.references.count) fonts") : styles.joined(separator: " · ")
+    }
+
     /// A pair is named by its two required fonts.
     private var name: String {
         FontPair.defaultName(japanese: japaneseName, latin: latinName)
@@ -104,7 +114,8 @@ struct MixedPairRow: View, Equatable {
             result[entry.script] = PreviewFaceSpec(
                 postScriptName: entry.reference.postScriptName,
                 fileURL: faces[entry.script]?.fileURL,
-                variations: variations[entry.reference.postScriptName]
+                variations: variations[entry.reference.postScriptName],
+                features: pair.options.features(for: entry.script)
             )
         }
     }

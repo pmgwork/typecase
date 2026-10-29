@@ -19,9 +19,13 @@ final class FontCatalog: ObservableObject {
     /// Tag names the user created. A tag stays in the sidebar while no font
     /// carries it, so it can be prepared before it is assigned.
     @Published private(set) var knownTags: Set<String> = []
-    @Published private(set) var categoryOverrides: [String: FontCategory] = [:]
     @Published private(set) var isLoading = false
     @Published var errorMessage: String?
+    @Published private(set) var activationCompletedFiles = 0
+    @Published private(set) var activationTotalFiles = 0
+    @Published private(set) var isUpdatingActivation = false
+    private var pendingActivationOperations = 0
+    private static let registrationBatchSize = 32
     /// Increments whenever catalog or user data changes; invalidates derived caches.
     @Published private(set) var dataRevision = 0
     /// Increments when the family list changes; windows use it to reconcile selection.
@@ -37,8 +41,12 @@ final class FontCatalog: ObservableObject {
     private var sourceCounts: [FontSource: Int] = [:]
     private var scopeCounts: [SystemFontScope: Int] = [:]
     private var folderCounts: [URL: Int] = [:]
+    private var folderActivationFiles: [URL: [FontActivationState]] = [:]
     private var tagCounts: [String: Int] = [:]
     private(set) var taggedFamilyIDs: [String: Set<FontFamily.ID>] = [:]
+    /// The faces of each family that more than one font file provides, in
+    /// face order. Families without duplicates have no entry.
+    private(set) var duplicatesByFamily: [FontFamily.ID: [FontDuplicate]] = [:]
 
     private let defaults = UserDefaults.standard
     private let engine = FontScanEngine()
@@ -64,6 +72,8 @@ final class FontCatalog: ObservableObject {
     /// Whether the snapshot on disk matches the current scan results.
     private var snapshotIsCurrent = false
     private var metadataCache: [URL: [String: FontNameTable.Metadata]] = [:]
+    /// Each face's variable axes by PostScript name; nil marks a static face.
+    private var variableInfoCache: [String: VariableFontInfo?] = [:]
     private var lastDirectoryFingerprint: UInt64 = 0
     private var securityScopedURLs: [URL] = []
     private var refreshTask: Task<Void, Never>?
@@ -78,8 +88,6 @@ final class FontCatalog: ObservableObject {
         userTags = (defaults.dictionary(forKey: "familyTags") as? [String: [String]] ?? [:])
             .mapValues(Set.init)
         migrateTags(storedNames: defaults.stringArray(forKey: "tagNames") ?? [])
-        categoryOverrides = (defaults.dictionary(forKey: "categoryOverrides") as? [String: String] ?? [:])
-            .compactMapValues(FontCategory.init(rawValue:))
         activeManagedNames = Set(defaults.stringArray(forKey: "activeManagedFonts") ?? [])
         mixedPairs = Self.loadMixedPairs(defaults: defaults)
         rebuildAllTags()
@@ -113,13 +121,17 @@ final class FontCatalog: ObservableObject {
     }
 
     func toggleFavorite(_ family: FontFamily) {
-        if favorites.contains(family.id) {
-            favorites.remove(family.id)
-            if familyIDs.contains(family.id) { favoriteCount -= 1 }
-        } else {
-            favorites.insert(family.id)
-            if familyIDs.contains(family.id) { favoriteCount += 1 }
-        }
+        setFavorite(!isFavorite(family), families: [family])
+    }
+
+    /// Apply one state to the selection, persisting and invalidating the list
+    /// once even when hundreds of families are selected.
+    func setFavorite(_ enabled: Bool, families: [FontFamily]) {
+        let ids = Set(families.map(\.id))
+        let updated = enabled ? favorites.union(ids) : favorites.subtracting(ids)
+        guard updated != favorites else { return }
+        favorites = updated
+        favoriteCount = favorites.intersection(familyIDs).count
         defaults.set(Array(favorites), forKey: "favoriteFamilies")
         dataRevision += 1
     }
@@ -338,30 +350,6 @@ final class FontCatalog: ObservableObject {
         tagCounts = ids.mapValues(\.count)
     }
 
-    /// Stores the user's classification, or clears the override when the chosen
-    /// value is the one the font file already implies.
-    func setCategory(_ category: FontCategory, for family: FontFamily) {
-        if category == family.detectedCategory {
-            categoryOverrides.removeValue(forKey: family.id)
-        } else {
-            categoryOverrides[family.id] = category
-        }
-        defaults.set(categoryOverrides.mapValues(\.rawValue), forKey: "categoryOverrides")
-        if let index = families.firstIndex(where: { $0.id == family.id }) {
-            let old = families[index]
-            let updated = FontFamily(
-                id: old.id, localizedName: old.localizedName,
-                languages: old.languages, localizedNames: old.localizedNames,
-                manufacturer: old.manufacturer, source: old.source,
-                category: category, detectedCategory: old.detectedCategory,
-                faces: old.faces
-            )
-            families[index] = updated
-            familyByID[old.id] = updated
-        }
-        dataRevision += 1
-    }
-
     // MARK: - Mixed pairs
 
     /// The pair a list selection names, or nil when the selection is not a
@@ -413,13 +401,17 @@ final class FontCatalog: ObservableObject {
     /// Saves a mixed-font combination from explicit faces. Returns nil when
     /// the Japanese or Latin face is missing.
     @discardableResult
-    func addMixedPair(references: [MixedScript: FontFaceReference]) -> FontPair? {
+    func addMixedPair(
+        references: [MixedScript: FontFaceReference],
+        typesetting: TypesettingOptions? = nil
+    ) -> FontPair? {
         guard let japanese = references[.japanese], let latin = references[.latin] else { return nil }
         let pair = FontPair(
             japanese: japanese,
             latin: latin,
             numbers: references[.numbers],
-            symbols: references[.symbols]
+            symbols: references[.symbols],
+            typesetting: typesetting
         )
         mixedPairs.append(pair)
         saveMixedPairs()
@@ -437,16 +429,6 @@ final class FontCatalog: ObservableObject {
             result[script] = FontFaceReference(familyID: family.id, postScriptName: face.postScriptName)
         }
         return result
-    }
-
-    /// The Japanese face used by a blank PlayGround type scale. Look it up in
-    /// the catalog so the inspector and the specimen resolve the same font.
-    func defaultPlaygroundFace() -> FontFaceReference? {
-        guard let family = family(matching: [
-            "Hiragino Sans", "ヒラギノ角ゴシック",
-            "Hiragino Kaku Gothic ProN", "ヒラギノ角ゴ ProN",
-        ]), let face = family.defaultMixedFace(for: .japanese) else { return nil }
-        return FontFaceReference(familyID: family.id, postScriptName: face.postScriptName)
     }
 
     /// The first installed family whose name matches one of the candidates,
@@ -517,6 +499,13 @@ final class FontCatalog: ObservableObject {
         return family.faces.first { $0.postScriptName == reference.postScriptName } ?? family.previewFace
     }
 
+    /// Only services represented by fonts in the catalog get navigation rows.
+    var hasCompletedInitialScan: Bool { hasLoadedOnce }
+
+    var availableProviders: [FontProvider] {
+        FontProviderRegistry.all.filter { fontCount(for: .section(.provider($0))) > 0 }
+    }
+
     /// Returns the unfiltered family count represented by a sidebar destination.
     /// The sidebar requests this only for its selected row.
     func fontCount(for selection: LibrarySelection) -> Int {
@@ -534,6 +523,8 @@ final class FontCatalog: ObservableObject {
                 return sourceCounts[.local, default: 0]
             case .mixed:
                 return mixedPairs.count
+            case .duplicates:
+                return duplicatesByFamily.count
             default:
                 return families.count
             }
@@ -548,10 +539,21 @@ final class FontCatalog: ObservableObject {
 
     // MARK: - Folders
 
-    func addFolder(onAdded: ((URL) -> Void)? = nil) {
+    /// Asks for ~/Library/Fonts, so its copies can be cleaned up.
+    func addUserFontsFolder(onAdded: ((URL) -> Void)? = nil) {
+        addFolder(
+            startingAt: Self.userFontsFolder,
+            message: String(localized: "Add your Fonts folder so TypeCase can move duplicate copies in it to Trash."),
+            onAdded: onAdded
+        )
+    }
+
+    func addFolder(startingAt directory: URL? = nil, message: String? = nil, onAdded: ((URL) -> Void)? = nil) {
         let panel = NSOpenPanel()
-        panel.title = "Choose a font folder"
-        panel.prompt = "Add Folder"
+        panel.title = String(localized: "Choose a font folder")
+        panel.prompt = String(localized: "Add Folder")
+        panel.directoryURL = directory
+        panel.message = message ?? ""
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
         panel.allowsMultipleSelection = true
@@ -561,9 +563,12 @@ final class FontCatalog: ObservableObject {
         // inside a menu tracking session does not appear.
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
-            let window = NSApp.keyWindow
+            var window = NSApp.keyWindow
                 ?? NSApp.mainWindow
                 ?? NSApp.windows.first(where: { $0.isVisible })
+            // A window already showing a sheet queues another one out of view,
+            // so present on the frontmost sheet, such as the cleanup sheet.
+            while let sheet = window?.attachedSheet { window = sheet }
             if let window {
                 panel.beginSheetModal(for: window) { response in
                     Task { @MainActor in self.adoptFolders(from: panel, response: response, onAdded: onAdded) }
@@ -619,6 +624,137 @@ final class FontCatalog: ObservableObject {
     func revealFiles(_ urls: [URL]) {
         guard !urls.isEmpty else { return }
         NSWorkspace.shared.activateFileViewerSelecting(urls)
+    }
+
+    /// Only inactive local files in added folders can be cleaned up here.
+    /// System and provider files remain under their original app's control.
+    private static let userFontsFolder = SystemFontScope.homeDirectory
+        .appending(path: "Library/Fonts", directoryHint: .isDirectory).standardizedFileURL
+
+    func duplicateCleanupFiles() -> [DuplicateCleanupFile] {
+        var namesByURL: [URL: Set<String>] = [:]
+        var protectedURLs: Set<URL> = []
+        for record in installedRecords + folderRecords {
+            guard let url = record.face.fileURL?.standardizedFileURL else { continue }
+            namesByURL[url, default: []].insert(record.face.postScriptName)
+            // Installed records read as .system even for a folder copy Core
+            // Text resolved, so only a provider's files count as theirs.
+            if record.source.provider != nil { protectedURLs.insert(url) }
+        }
+        let inUse = Set(installedRecords.compactMap { $0.face.fileURL?.standardizedFileURL })
+        return namesByURL.map { url, names in
+            let cached = fileCache[url]
+            let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey, .contentModificationDateKey])
+            let scope = CTFontManagerGetScopeForURL(url as CFURL)
+            let isInFolder = folders.contains(where: { url.isContained(in: $0) })
+            let isActive = inUse.contains(url) || scope != .none
+            // A copy TypeCase activated from a folder can be turned off; one
+            // installed or loaded some other way stays.
+            let activatedHere = scope == .user && isInFolder
+                && !(cached?.descriptorNames ?? names).isDisjoint(with: activeManagedNames)
+            let isMovable = values?.isRegularFile == true && values?.isSymbolicLink != true
+                && url.resolvingSymlinksInPath() == url && FileManager.default.isDeletableFile(atPath: url.path)
+            let reason: String?
+            if isActive && !activatedHere {
+                reason = String(localized: "In Use")
+            } else if protectedURLs.contains(url) || !isInFolder {
+                reason = String(localized: "Managed by another app")
+            } else if cached == nil || !isMovable {
+                reason = String(localized: "Unavailable")
+            } else {
+                reason = nil
+            }
+            // The person may unlock a copy in use that sits in one of their
+            // folders or in ~/Library/Fonts; a provider's or the system's stays.
+            // The sandbox can move a ~/Library/Fonts file only once that
+            // folder is added, which isMovable reflects.
+            let isUnlockable = reason != nil && isActive && !activatedHere && isMovable
+                && !protectedURLs.contains(url)
+                && (isInFolder || url.isContained(in: Self.userFontsFolder))
+            return DuplicateCleanupFile(
+                url: url, names: cached?.descriptorNames ?? names, protectionReason: reason,
+                size: Int64(values?.fileSize ?? 0), modified: values?.contentModificationDate,
+                isActive: isActive, isUnlockable: isUnlockable,
+                needsFolderAccess: reason != nil && !isInFolder && !isMovable && values?.isRegularFile == true
+                    && !protectedURLs.contains(url) && url.isContained(in: Self.userFontsFolder)
+            )
+        }.sorted { $0.url.path < $1.url.path }
+    }
+
+    /// Revalidates the reviewed files and the unique-face warning immediately
+    /// before moving anything. Active copies are unregistered file by file,
+    /// leaving the remembered activation of their faces to the copy that stays.
+    func trashDuplicateFiles(
+        _ selected: Set<URL>, unlocked: Set<URL> = [], reviewed: [DuplicateCleanupFile]
+    ) async throws {
+        let changed = NSError(domain: "TypeCase.DuplicateCleanup", code: 1, userInfo: [
+            NSLocalizedDescriptionKey: String(localized: "The font files changed. Review the list again before cleaning up.")
+        ])
+        guard !isLoading, !isUpdatingActivation else { throw changed }
+        let files = DuplicateCleanupPolicy.unlocking(unlocked, in: duplicateCleanupFiles())
+        guard DuplicateCleanupPolicy.canRemove(selected, from: files),
+              DuplicateCleanupPolicy.missingNames(afterRemoving: selected, from: files)
+                == DuplicateCleanupPolicy.missingNames(afterRemoving: selected, from: reviewed),
+              selected.allSatisfy({ url in files.first(where: { $0.url == url }) == reviewed.first(where: { $0.url == url }) })
+        else { throw changed }
+
+        func currentNames(at url: URL) -> Set<String> {
+            let descriptors = CTFontManagerCreateFontDescriptorsFromURL(url as CFURL) as? [CTFontDescriptor] ?? []
+            return Set(descriptors.compactMap { CTFontDescriptorCopyAttribute($0, kCTFontNameAttribute) as? String })
+        }
+        let removing = files.filter { selected.contains($0.url) }
+        for file in removing {
+            guard currentNames(at: file.url) == file.names else { throw changed }
+        }
+
+        // Not through applyActivation: that records the faces as off, and the
+        // surviving copy shares their names.
+        // Only registered copies are turned off and, on failure, back on. An
+        // installed one in ~/Library/Fonts goes out of use when it moves.
+        let active = removing.filter { $0.isActive && CTFontManagerGetScopeForURL($0.url as CFURL) == .user }
+        func register(_ enabled: Bool, _ files: [DuplicateCleanupFile]) async -> [FontRegistrationOutcome] {
+            guard !files.isEmpty else { return [] }
+            let actions = files.map {
+                FontRegistrationAction(url: $0.url, names: $0.names, enabled: enabled, skipIfAlreadyScoped: true)
+            }
+            let outcomes = await registrationQueue.enqueue { [registrar] in await registrar.synchronize(actions) }
+            let urls = Set(files.map(\.url))
+            await coverage.invalidate(urls: urls)
+            FontResolver.shared.invalidate(names: Set(files.flatMap(\.names)), urls: urls)
+            return outcomes
+        }
+
+        var moved: Set<URL> = []
+        // Whatever stays behind is turned back on, so a failure leaves the
+        // library as it was.
+        defer {
+            if !active.isEmpty || !moved.isEmpty {
+                let restore = active.filter { !moved.contains($0.url) }
+                Task { @MainActor in
+                    _ = await register(true, restore)
+                    refresh()
+                }
+            }
+        }
+        if let failure = await register(false, active).first(where: { !$0.succeeded }) {
+            throw NSError(domain: "TypeCase.DuplicateCleanup", code: 2, userInfo: [
+                NSLocalizedDescriptionKey: failure.errorDescription ?? failure.url.lastPathComponent
+            ])
+        }
+        // An installed copy still resolves until it moves; every other copy
+        // must already be out of Core Text's way.
+        let registered = Set(active.map(\.url))
+        for file in removing where !file.isActive || registered.contains(file.url) {
+            for name in file.names {
+                let font = CTFontCreateWithName(name as CFString, 12, nil)
+                let resolved = CTFontCopyAttribute(font, kCTFontURLAttribute) as? URL
+                guard resolved?.standardizedFileURL != file.url else { throw changed }
+            }
+        }
+        for file in removing {
+            try FileManager.default.trashItem(at: file.url, resultingItemURL: nil)
+            moved.insert(file.url)
+        }
     }
 
     /// Puts the given file paths on the general pasteboard, one per line.
@@ -688,17 +824,15 @@ final class FontCatalog: ObservableObject {
 
         let activeNames = activeManagedNames
         let deactivatedNames = deactivatedManagedNames
-        let overrides = categoryOverrides
         let grouped = await Task.detached(priority: .userInitiated) {
             Self.group(
                 installedRecords: snapshot.installedRecords,
                 folderRecords: snapshot.folderRecords,
                 activeNames: activeNames,
-                deactivatedNames: deactivatedNames,
-                categoryOverrides: overrides
+                deactivatedNames: deactivatedNames
             )
         }.value
-        guard !hasLoadedOnce, refreshTask == nil, overrides == categoryOverrides else { return }
+        guard !hasLoadedOnce, refreshTask == nil else { return }
         folderRecords = snapshot.folderRecords
         families = grouped
         rebuildIndexes()
@@ -763,20 +897,18 @@ final class FontCatalog: ObservableObject {
         ))
 
         // Grouping and localized name sorting can be expensive for large font
-        // libraries. Only apply the snapshot if activation/preferences have not
+        // libraries. Only apply the snapshot if activation has not
         // changed while the background work was running.
         let registrationRevision = userRegistrationRevision
         let activeNames = activeManagedNames
         let deactivatedNames = deactivatedManagedNames
-        let overrides = categoryOverrides
         let grouped: [FontFamily]? = output.hasChanges || !hasLoadedOnce
             ? await Task.detached(priority: .userInitiated) {
                 Self.group(
                     installedRecords: output.installedRecords,
                     folderRecords: output.folderRecords,
                     activeNames: activeNames,
-                    deactivatedNames: deactivatedNames,
-                    categoryOverrides: overrides
+                    deactivatedNames: deactivatedNames
                 )
             }.value
             : nil
@@ -796,12 +928,13 @@ final class FontCatalog: ObservableObject {
             // files must not keep their cached character sets or metadata.
             let changedFiles = Set(output.changedFiles)
             metadataCache.removeAll()
+            variableInfoCache.removeAll()
             Task { await coverage.invalidate(urls: changedFiles) }
         }
 
         if output.hasChanges || !hasLoadedOnce {
             installedRecords = output.installedRecords
-            if registrationRevision == userRegistrationRevision, overrides == categoryOverrides,
+            if registrationRevision == userRegistrationRevision,
                let grouped {
                 families = grouped
                 rebuildIndexes()
@@ -854,6 +987,7 @@ final class FontCatalog: ObservableObject {
         abortingWhen shouldAbort: () -> Bool
     ) async -> Bool {
         var didRegister = false
+        var actions: [FontRegistrationAction] = []
         for url in changedFiles {
             if shouldAbort() { break }
             guard let cached = files[url], !cached.descriptorNames.isEmpty,
@@ -864,7 +998,12 @@ final class FontCatalog: ObservableObject {
                 enabled: true,
                 skipIfAlreadyScoped: false
             )
-            let outcomes = await registrar.synchronize([action])
+            actions.append(action)
+        }
+        for start in stride(from: 0, to: actions.count, by: Self.registrationBatchSize) {
+            if shouldAbort() { break }
+            let end = min(start + Self.registrationBatchSize, actions.count)
+            let outcomes = await registrar.synchronize(Array(actions[start..<end]))
             if outcomes.contains(where: \.succeeded) { didRegister = true }
         }
         return didRegister
@@ -876,7 +1015,22 @@ final class FontCatalog: ObservableObject {
     /// registering undo when a manager is provided. The row's radio button and
     /// the context menu, including a multi-selection, all come through here.
     func setEnabled(_ enabled: Bool, families: [FontFamily], undoManager: UndoManager? = nil) {
+        guard !isUpdatingActivation else { return }
         let states = activationStates(for: families)
+            .filter { $0.enabled != enabled }
+            .map { FontActivationState(url: $0.url, names: $0.names, enabled: enabled) }
+        applyActivation(states, undoManager: undoManager)
+    }
+
+    /// Uses file paths rather than family membership: a family's other styles
+    /// may live outside this folder. Descendants and collection files count once.
+    func activationStates(in folder: URL) -> [FontActivationState] {
+        folderActivationFiles[folder.standardizedFileURL] ?? []
+    }
+
+    func setEnabled(_ enabled: Bool, in folder: URL, undoManager: UndoManager? = nil) {
+        guard !isUpdatingActivation else { return }
+        let states = activationStates(in: folder)
             .filter { $0.enabled != enabled }
             .map { FontActivationState(url: $0.url, names: $0.names, enabled: enabled) }
         applyActivation(states, undoManager: undoManager)
@@ -891,6 +1045,7 @@ final class FontCatalog: ObservableObject {
         in family: FontFamily,
         undoManager: UndoManager? = nil
     ) {
+        guard !isUpdatingActivation else { return }
         let urls = Set(faces.compactMap(\.fileURL?.standardizedFileURL))
         let states = activationStates(for: [family])
             .filter { urls.contains($0.url.standardizedFileURL) && $0.enabled != enabled }
@@ -985,28 +1140,48 @@ final class FontCatalog: ObservableObject {
         }
         guard !actions.isEmpty else { return }
 
-        let urls = Set(enabledByURL.keys)
+        // Publish before starting work so the first click immediately gets
+        // feedback. Undo/Redo may enqueue another operation; retain serial order.
+        if pendingActivationOperations == 0 {
+            activationCompletedFiles = 0
+            activationTotalFiles = 0
+        }
+        pendingActivationOperations += 1
+        activationTotalFiles += actions.count
+        isUpdatingActivation = true
         userRegistrationRevision += 1
         Task { [weak self] in
             guard let self else { return }
             await self.registrationQueue.enqueue { [weak self] in
                 guard let self else { return }
-                let outcomes = await self.registrar.synchronize(actions)
-                self.applyToggleOutcomes(outcomes, enabledByURL: enabledByURL)
-                // Activation switches a face between the registered font and
-                // its file, which can resolve to different coverage data.
-                await self.coverage.invalidate(urls: urls)
-                let changedNames = Set(outcomes.filter(\.succeeded).flatMap(\.names))
-                if !changedNames.isEmpty {
-                    self.regroup(affectedBy: changedNames)
-                    FontResolver.shared.invalidate(names: changedNames, urls: urls)
+                defer {
+                    self.pendingActivationOperations -= 1
+                    self.isUpdatingActivation = self.pendingActivationOperations > 0
                 }
-                self.dataRevision += 1
+                var failures: [String] = []
+                for start in stride(from: 0, to: actions.count, by: Self.registrationBatchSize) {
+                    let end = min(start + Self.registrationBatchSize, actions.count)
+                    let batch = Array(actions[start..<end])
+                    let outcomes = await self.registrar.synchronize(batch)
+                    self.applyToggleOutcomes(outcomes, enabledByURL: enabledByURL, reportErrors: false)
+                    failures += outcomes.filter { !$0.succeeded }.map { $0.errorDescription ?? $0.url.lastPathComponent }
+                    let successful = outcomes.filter(\.succeeded)
+                    let urls = Set(successful.map(\.url))
+                    await self.coverage.invalidate(urls: urls)
+                    let changedNames = Set(successful.flatMap(\.names))
+                    if !changedNames.isEmpty {
+                        self.regroup(affectedBy: changedNames)
+                        FontResolver.shared.invalidate(names: changedNames, urls: urls)
+                    }
+                    self.activationCompletedFiles += batch.count
+                    self.dataRevision += 1
+                }
+                if !failures.isEmpty { self.errorMessage = failures.joined(separator: "\n") }
             }
         }
     }
 
-    private func applyToggleOutcomes(_ outcomes: [FontRegistrationOutcome], enabledByURL: [URL: Bool]) {
+    private func applyToggleOutcomes(_ outcomes: [FontRegistrationOutcome], enabledByURL: [URL: Bool], reportErrors: Bool = true) {
         var failures: [String] = []
         for outcome in outcomes {
             let enabled = enabledByURL[outcome.url] ?? true
@@ -1023,15 +1198,15 @@ final class FontCatalog: ObservableObject {
             }
         }
         defaults.set(Array(activeManagedNames), forKey: "activeManagedFonts")
-        if !failures.isEmpty {
+        if reportErrors && !failures.isEmpty {
             errorMessage = failures.joined(separator: "\n")
         }
     }
 
     private static func activationActionName(for states: [FontActivationState]) -> String {
-        if states.allSatisfy(\.enabled) { return "Activate Fonts" }
-        if states.allSatisfy({ !$0.enabled }) { return "Deactivate Fonts" }
-        return "Change Font Activation"
+        if states.allSatisfy(\.enabled) { return String(localized: "Activate Fonts") }
+        if states.allSatisfy({ !$0.enabled }) { return String(localized: "Deactivate Fonts") }
+        return String(localized: "Change Font Activation")
     }
 
     // MARK: - Character coverage
@@ -1048,17 +1223,24 @@ final class FontCatalog: ObservableObject {
     /// The characters of `text` the family's preview face cannot display.
     func missingCharacters(in text: String, for family: FontFamily) async -> [String] {
         guard let face = family.previewFace else { return [] }
-        return await missingCharacters(in: text, for: face)
-    }
-
-    /// The characters of `text` the face cannot display. The family's version
-    /// checks the preview face; the PlayGround checks the style a block uses.
-    func missingCharacters(in text: String, for face: FontFace) async -> [String] {
-        await coverage.missingCharacters(
+        return await coverage.missingCharacters(
             postScriptName: face.postScriptName,
             fileURL: face.fileURL,
             text: text
         )
+    }
+
+    /// The face's drawable characters grouped for the glyph browser. Reading
+    /// and grouping a CJK font's tens of thousands of code points stays off
+    /// the main actor.
+    func glyphInventory(for face: FontFace) async -> GlyphInventory {
+        let codePoints = await coverage.coveredCodePoints(
+            postScriptName: face.postScriptName,
+            fileURL: face.fileURL
+        )
+        return await Task.detached(priority: .userInitiated) {
+            GlyphInventory(codePoints: codePoints)
+        }.value
     }
 
     /// The preview face's variable axes, or nil for a static font.
@@ -1070,6 +1252,23 @@ final class FontCatalog: ObservableObject {
             )
         }.value
     }
+
+    /// A face's variable axes and its own coordinates, or nil for a static
+    /// face. Cached per face, so expanding a list row again reads nothing.
+    func variableInfo(for face: FontFace) async -> VariableFontInfo? {
+        if let cached = variableInfoCache[face.postScriptName] { return cached }
+        let info = await Task.detached(priority: .userInitiated) {
+            FontResolver.backgroundVariableInfo(
+                postScriptName: face.postScriptName, fileURL: face.fileURL, size: FontCatalog.variableInfoSize
+            )
+        }.value
+        variableInfoCache[face.postScriptName] = info
+        return info
+    }
+
+    /// The point size cached axis values are read at; optical-size axes
+    /// report their coordinate for this size.
+    nonisolated static let variableInfoSize: CGFloat = 40
 
     /// A face's descriptive metadata, read from its font file off the main
     /// thread and cached per file. Returns nil when the file cannot be read.
@@ -1094,8 +1293,7 @@ final class FontCatalog: ObservableObject {
             installedRecords: installedRecords,
             folderRecords: folderRecords,
             activeNames: activeManagedNames,
-            deactivatedNames: deactivatedManagedNames,
-            categoryOverrides: categoryOverrides
+            deactivatedNames: deactivatedManagedNames
         )
         rebuildIndexes()
         FontResolver.shared.invalidate()
@@ -1105,8 +1303,7 @@ final class FontCatalog: ObservableObject {
         installedRecords: [FaceRecord],
         folderRecords: [FaceRecord],
         activeNames: Set<String>,
-        deactivatedNames: Set<String>,
-        categoryOverrides: [String: FontCategory]
+        deactivatedNames: Set<String>
     ) -> [FontFamily] {
         var installedNames: Set<String> = []
         var records: [FaceRecord] = []
@@ -1124,7 +1321,7 @@ final class FontCatalog: ObservableObject {
                 || (installedNames.contains(name) && !deactivatedNames.contains(name))
             records.append(record.withInstalled(isInstalled))
         }
-        return group(records, categoryOverrides: categoryOverrides)
+        return group(records)
     }
 
     /// Registration changes only the installed flag of faces in the affected
@@ -1149,7 +1346,7 @@ final class FontCatalog: ObservableObject {
                 || (installedNames.contains(name) && !deactivatedManagedNames.contains(name))
             records.append(record.withInstalled(installed))
         }
-        let updated = Dictionary(uniqueKeysWithValues: Self.group(records, categoryOverrides: categoryOverrides)
+        let updated = Dictionary(uniqueKeysWithValues: Self.group(records)
             .map { ($0.id, $0) })
         for index in families.indices {
             if let family = updated[families[index].id] {
@@ -1157,6 +1354,12 @@ final class FontCatalog: ObservableObject {
                 familyByID[family.id] = family
             }
         }
+        // Activation updates families without rebuilding the full library indexes.
+        // Refresh the folder cache too, including ancestors, so indicators and
+        // the next toggle use the completed operation's state.
+        folderActivationFiles = Self.folderActivationIndex(
+            activationStates(for: families), roots: folders.map(\.standardizedFileURL)
+        )
     }
 
     nonisolated private static func familyID(for name: String) -> String {
@@ -1176,9 +1379,19 @@ final class FontCatalog: ObservableObject {
         var sources: [FontSource: Int] = [:]
         var scopeTotals: [SystemFontScope: Int] = [:]
         var folderTotals: [URL: Int] = [:]
+        let copiesByName = Self.duplicateCopies(installedRecords: installedRecords, folderRecords: folderRecords)
+        var duplicates: [FontFamily.ID: [FontDuplicate]] = [:]
 
         for family in families {
             byID[family.id] = family
+            if !copiesByName.isEmpty {
+                let familyDuplicates: [FontDuplicate] = family.faces.compactMap { face in
+                    copiesByName[face.postScriptName].map {
+                        FontDuplicate(postScriptName: face.postScriptName, styleName: face.styleName, copies: $0)
+                    }
+                }
+                if !familyDuplicates.isEmpty { duplicates[family.id] = familyDuplicates }
+            }
             sources[family.source, default: 0] += 1
             if family.source == .system {
                 systemCount += 1
@@ -1200,6 +1413,10 @@ final class FontCatalog: ObservableObject {
             }
         }
 
+        // Cache per-folder file states once per catalog revision, keeping the
+        // sidebar inexpensive even with a large expanded directory tree.
+        folderActivationFiles = Self.folderActivationIndex(activationStates(for: families), roots: roots)
+
         familyByID = byID
         familyIDs = Set(byID.keys)
         favoriteCount = favorites.intersection(familyIDs).count
@@ -1209,7 +1426,57 @@ final class FontCatalog: ObservableObject {
         sourceCounts = sources
         scopeCounts = scopeTotals
         folderCounts = folderTotals
+        duplicatesByFamily = duplicates
         rebuildTagCounts()
+    }
+
+    nonisolated static func folderActivationIndex(
+        _ states: [FontActivationState], roots: [URL]
+    ) -> [URL: [FontActivationState]] {
+        var index: [URL: [FontActivationState]] = [:]
+        var seen: Set<URL> = []
+        for state in states where seen.insert(state.url.standardizedFileURL).inserted {
+            for folder in ancestors(of: state.url, within: roots) {
+                index[folder, default: []].append(state)
+            }
+        }
+        return index
+    }
+
+    /// The files of every PostScript name that more than one file provides.
+    ///
+    /// The installed records name the file Core Text resolves each name to,
+    /// so that copy is the one in use; a folder font TypeCase activated is the
+    /// same file in both lists and is not a duplicate of itself. Two installed
+    /// files with one name are invisible here, because the installed font list
+    /// reports each name once.
+    private static func duplicateCopies(
+        installedRecords: [FaceRecord],
+        folderRecords: [FaceRecord]
+    ) -> [String: [FontFileCopy]] {
+        var inUse: [String: URL] = [:]
+        var copies: [String: [URL: FontSource]] = [:]
+        for record in installedRecords {
+            guard let url = record.face.fileURL?.standardizedFileURL else { continue }
+            inUse[record.face.postScriptName] = url
+            copies[record.face.postScriptName, default: [:]][url] = record.source
+        }
+        for record in folderRecords {
+            guard let url = record.face.fileURL?.standardizedFileURL else { continue }
+            if copies[record.face.postScriptName]?[url] == nil {
+                copies[record.face.postScriptName, default: [:]][url] = record.source
+            }
+        }
+        return copies.reduce(into: [:]) { result, entry in
+            guard entry.value.count > 1 else { return }
+            let name = entry.key
+            result[name] = entry.value
+                .map { FontFileCopy(url: $0.key, source: $0.value, isInUse: inUse[name] == $0.key) }
+                .sorted {
+                    if $0.isInUse != $1.isInUse { return $0.isInUse }
+                    return $0.url.path.localizedStandardCompare($1.url.path) == .orderedAscending
+                }
+        }
     }
 
     private static func systemScopes(for face: FontFace, home: URL, allUsers: URL) -> Set<SystemFontScope> {
@@ -1226,7 +1493,7 @@ final class FontCatalog: ObservableObject {
     /// Every directory between a font file and the outermost added folder that
     /// contains it. Folder sections match against this set instead of resolving
     /// paths while filtering.
-    private static func ancestors(of url: URL, within roots: [URL]) -> Set<URL> {
+    nonisolated private static func ancestors(of url: URL, within roots: [URL]) -> Set<URL> {
         let file = url.standardizedFileURL
         let components = file.pathComponents
 
@@ -1297,17 +1564,19 @@ final class FontCatalog: ObservableObject {
     /// half a frame, so scrolling and typing stay smooth while it runs.
     private static let seedSliceDuration: CFAbsoluteTime = 0.008
 
-    nonisolated private static func group(_ records: [FaceRecord], categoryOverrides: [String: FontCategory]) -> [FontFamily] {
+    nonisolated private static func group(_ records: [FaceRecord]) -> [FontFamily] {
         Dictionary(grouping: records, by: {
             familyID(for: $0.family)
         })
         .compactMap { id, records -> FontFamily? in
             guard let first = records.first else { return nil }
             var facesByName: [String: FontFace] = [:]
+            var categoriesByName: [String: FontCategory] = [:]
             for record in records {
                 let existing = facesByName[record.face.postScriptName]
                 if existing == nil || record.face.isManaged {
                     facesByName[record.face.postScriptName] = record.face
+                    categoriesByName[record.face.postScriptName] = record.category
                 }
             }
             // The PostScript name settles faces with the same weight and style
@@ -1332,6 +1601,7 @@ final class FontCatalog: ObservableObject {
                     names[language] = name
                 }
             }
+            let detectedCategory = FontClassifier.familyCategory(Array(categoriesByName.values))
             return FontFamily(
                 id: id,
                 localizedName: first.family,
@@ -1339,8 +1609,7 @@ final class FontCatalog: ObservableObject {
                 localizedNames: localizedNames,
                 manufacturer: first.manufacturer,
                 source: source,
-                category: categoryOverrides[id] ?? first.category,
-                detectedCategory: first.category,
+                category: detectedCategory,
                 faces: deduplicated
             )
         }

@@ -8,22 +8,19 @@ nonisolated struct PreviewCoverageRequest: Equatable, Sendable {
     let familiesRevision: Int
 }
 
-/// How the library list is ordered. Favorites-first stays a separate setting,
-/// so it layers on top of every order.
+/// The base order. Enabled-first and favorites-first layer on top independently.
 nonisolated enum LibrarySortOrder: String, CaseIterable, Identifiable, Sendable {
     case name
     case manufacturer
     case dateAdded
-    case activation
 
     var id: String { rawValue }
 
     var title: String {
         switch self {
-        case .name: "Name"
-        case .manufacturer: "Manufacturer"
-        case .dateAdded: "Recently Added"
-        case .activation: "Activated First"
+        case .name: String(localized: "Name")
+        case .manufacturer: String(localized: "Manufacturer")
+        case .dateAdded: String(localized: "Recently Added")
         }
     }
 }
@@ -60,6 +57,7 @@ final class LibraryViewState: ObservableObject {
         let activationFilter: ActivationFilter
         let sortOrder: LibrarySortOrder
         let favoritesFirst: Bool
+        let activatedFirst: Bool
         let catalogRevision: Int
         let coverageRevision: Int
     }
@@ -70,7 +68,7 @@ final class LibraryViewState: ObservableObject {
         let sectionIsEmpty: Bool
     }
 
-    func filter(catalog: FontCatalog, favoritesFirst: Bool) -> FilterOutput {
+    func filter(catalog: FontCatalog, favoritesFirst: Bool, activatedFirst: Bool) -> FilterOutput {
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
         let key = FilterKey(
             query: query,
@@ -79,6 +77,7 @@ final class LibraryViewState: ObservableObject {
             activationFilter: activationFilter,
             sortOrder: sortOrder,
             favoritesFirst: favoritesFirst,
+            activatedFirst: activatedFirst,
             catalogRevision: catalog.dataRevision,
             coverageRevision: coverageRevision
         )
@@ -133,23 +132,10 @@ final class LibraryViewState: ObservableObject {
             matches.append(family)
         }
 
-        // The catalog order is by name; every order keeps a name tiebreaker so
-        // equal entries stay predictable. Favorites-first is layered on top.
-        if sortOrder == .name {
-            // The catalog is already sorted by display name. Filtering preserves
-            // that order; stable partitioning also keeps it within each group.
-            if favoritesFirst {
-                let favorites = matches.filter { catalog.favorites.contains($0.id) }
-                let others = matches.filter { !catalog.favorites.contains($0.id) }
-                matches = favorites + others
-            }
-        } else {
+        // The catalog is already in name order. Other base orders retain a
+        // name tiebreaker, then stable partitions add independent priorities.
+        if sortOrder != .name {
             matches.sort { lhs, rhs in
-                if favoritesFirst {
-                    let lhsFavorite = catalog.favorites.contains(lhs.id)
-                    let rhsFavorite = catalog.favorites.contains(rhs.id)
-                    if lhsFavorite != rhsFavorite { return lhsFavorite }
-                }
                 switch sortOrder {
                 case .name:
                     break
@@ -160,11 +146,17 @@ final class LibraryViewState: ObservableObject {
                     let lhsTime = catalog.addedTime(for: lhs)
                     let rhsTime = catalog.addedTime(for: rhs)
                     if lhsTime != rhsTime { return lhsTime > rhsTime }
-                case .activation:
-                    if lhs.isEnabled != rhs.isEnabled { return lhs.isEnabled }
                 }
                 return lhs.name.localizedStandardCompare(rhs.name) == .orderedAscending
             }
+        }
+        if activatedFirst {
+            matches = matches.filter(\.isEnabled) + matches.filter { !$0.isEnabled }
+        }
+        if favoritesFirst {
+            // Favorites retain priority over enabled status, as before.
+            matches = matches.filter { catalog.favorites.contains($0.id) }
+                + matches.filter { !catalog.favorites.contains($0.id) }
         }
 
         let output = FilterOutput(
@@ -250,11 +242,11 @@ final class LibraryViewState: ObservableObject {
 
     /// Keeps the selection valid after the catalog changes and selects the first
     /// font when nothing is selected, matching the behavior of a fresh library.
-    func reconcile(with catalog: FontCatalog) {
+    func reconcile(with catalog: FontCatalog, settings: AppSettings) {
         // Before the first scan finishes there is nothing to reconcile against;
         // a restored selection must survive until the families arrive.
+        reconcileDestination(with: catalog, settings: settings)
         guard !catalog.familyIDs.isEmpty else { return }
-        reconcileDestination(with: catalog)
         // A saved pair is selected from its own section, so its id stays valid
         // alongside the family ids.
         let selectable = catalog.familyIDs.union(catalog.mixedPairs.map(\.selectionID))
@@ -264,11 +256,31 @@ final class LibraryViewState: ObservableObject {
         }
     }
 
-    /// Keeps the sidebar destination valid when the tag it names disappears,
-    /// so the window never shows an invisible selection.
-    func reconcileDestination(with catalog: FontCatalog) {
-        guard !catalog.familyIDs.isEmpty else { return }
-        if case .tag(let tag) = librarySelection, !catalog.hasTag(tag) {
+    /// A completed scan may remove the last font of the selected service.
+    /// Keep restored navigation during loading, then select a visible fallback.
+    func reconcileDestination(with catalog: FontCatalog, settings: AppSettings) {
+        guard catalog.hasCompletedInitialScan, !catalog.isLoading else { return }
+        let missingProvider: Bool
+        if case .section(let section) = librarySelection, let provider = section.provider {
+            missingProvider = !catalog.availableProviders.contains(where: { $0.id == provider.id })
+        } else {
+            missingProvider = false
+        }
+        let missingTag: Bool
+        if case .tag(let tag) = librarySelection {
+            missingTag = !catalog.hasTag(tag)
+        } else {
+            missingTag = false
+        }
+        guard missingProvider || missingTag else { return }
+        if let fallback = settings.visibleSidebarSections.first(where: { section in
+            guard let provider = section.provider else { return true }
+            return catalog.availableProviders.contains(where: { $0.id == provider.id })
+        }) {
+            librarySelection = .section(fallback)
+        } else if let folder = catalog.folders.first {
+            librarySelection = .folder(folder)
+        } else {
             librarySelection = .section(.all)
         }
     }
@@ -314,6 +326,7 @@ final class LibraryViewState: ObservableObject {
             case .favorites: return catalog.favorites.contains(family.id)
             case .system: return family.source == .system
             case .local: return family.source == .local
+            case .duplicates: return catalog.duplicatesByFamily[family.id] != nil
             default: return false
             }
         case .systemScope(let scope):

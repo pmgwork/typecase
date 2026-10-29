@@ -4,14 +4,28 @@ import SwiftUI
 struct ContentView: View {
     @EnvironmentObject private var catalog: FontCatalog
     @EnvironmentObject private var settings: AppSettings
-    @EnvironmentObject private var playground: PlaygroundStore
     @EnvironmentObject private var mixedPairDraft: MixedPairDraft
-    @Environment(\.openWindow) private var openWindow
     @StateObject private var viewState = LibraryViewState()
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
     @State private var inspectorVisible = true
     @State private var comparisonVisible = false
     @State private var window: NSWindow?
+    @State private var searchFocused = false
+    @State private var isFullScreen = false
+
+    private var toolbarColor: Color {
+        settings.previewBackgroundColor ?? Color(nsColor: .windowBackgroundColor)
+    }
+
+    /// AppKit hosts the full-screen toolbar in a window of its own, which
+    /// SwiftUI's toolbar background does not reach; it shows black behind
+    /// the hidden toolbar background unless it is painted directly.
+    private func paintFullScreenToolbar() {
+        let color = NSColor(toolbarColor)
+        for candidate in NSApp.windows where String(describing: type(of: candidate)).contains("ToolbarFullScreenWindow") {
+            candidate.backgroundColor = color
+        }
+    }
 
     var body: some View {
         NavigationSplitView(columnVisibility: $columnVisibility) {
@@ -30,7 +44,23 @@ struct ContentView: View {
         .navigationTitle("TypeCase")
         // Preserve the principal region so trailing controls stay right-aligned.
         .toolbarTitleDisplayMode(.inline)
+        // In full screen the toolbar moves to a window of its own; a visible
+        // SwiftUI toolbar background draws the system material there instead
+        // of the canvas color, so the background stays hidden and that window
+        // is painted directly (see paintFullScreenToolbar).
         .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.willEnterFullScreenNotification)) { note in
+            if note.object as? NSWindow === window { isFullScreen = true }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didEnterFullScreenNotification)) { _ in
+            paintFullScreenToolbar()
+        }
+        .onChange(of: settings.previewBackgroundColor) {
+            if isFullScreen { paintFullScreenToolbar() }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.willExitFullScreenNotification)) { note in
+            if note.object as? NSWindow === window { isFullScreen = false }
+        }
         // Keep the window's minimum size independent of sidebar and inspector visibility.
         // Otherwise AppKit changes the window frame when a split-view column is restored.
         // The width fits every column at its minimum: 190 + 480 + 280.
@@ -45,6 +75,7 @@ struct ContentView: View {
             // as its own control instead of merging into their background.
             ToolbarItem(placement: .navigation) {
                 PreviewSizeControl(size: $settings.previewSize)
+                    .padding(.trailing, 8)
             }
             .sharedBackgroundVisibility(.hidden)
 
@@ -52,53 +83,28 @@ struct ContentView: View {
             // drawn inside the button group's shared background.
             ToolbarItem(placement: .navigation) {
                 PreviewColorsControl()
+                    .padding(.trailing, 8)
             }
             .sharedBackgroundVisibility(.hidden)
 
             // On macOS, confirmationAction is the trailing toolbar region;
             // navigation items stay on the leading side.
-            ToolbarItem(placement: .navigation) {
-                Button {
-                    playground.use(
-                        viewState.selectedFamilies(catalog: catalog),
-                        text: viewState.previewText,
-                        size: settings.previewSize
-                    )
-                    openWindow(id: PlaygroundWindow.id)
-                } label: {
-                    Label("PlayGround", systemImage: "text.word.spacing")
-                }
-                .help("Add the selected fonts to the PlayGround")
-            }
-
-            ToolbarItem(placement: .navigation) {
-                NewMixedPairButton(catalog: catalog)
+            ToolbarItem(placement: .confirmationAction) {
+                LibraryFilterMenu(viewState: viewState)
             }
 
             ToolbarItem(placement: .confirmationAction) {
-                Menu {
-                    Picker("Category", selection: $viewState.category) {
-                        Text("All Categories").tag(FontCategory?.none)
-                        ForEach(FontCategory.allCases) { category in
-                            Text(category.title).tag(Optional(category))
-                        }
+                if catalog.isUpdatingActivation {
+                    HStack(spacing: 6) {
+                        ProgressView()
+                            .controlSize(.small)
+                        Text(verbatim: "\(catalog.activationCompletedFiles)/\(catalog.activationTotalFiles)")
+                            .monospacedDigit()
+                            .font(.caption)
                     }
-                    Divider()
-                    Picker("Status", selection: $viewState.activationFilter) {
-                        ForEach(ActivationFilter.allCases) { filter in
-                            Text(filter.title).tag(filter)
-                        }
-                    }
-                    Divider()
-                    Picker("Sort By", selection: $viewState.sortOrder) {
-                        ForEach(LibrarySortOrder.allCases) { order in
-                            Text(order.title).tag(order)
-                        }
-                    }
-                } label: {
-                    Label("Filter", systemImage: "line.3.horizontal.decrease.circle")
+                    .accessibilityLabel(String(localized: "Change Font Activation"))
+                    .help(String(localized: "Change Font Activation"))
                 }
-                .help("Filter by category and status, and choose the list order")
             }
 
             ToolbarSpacer(.fixed, placement: .confirmationAction)
@@ -107,19 +113,30 @@ struct ContentView: View {
                 Button {
                     inspectorVisible.toggle()
                 } label: {
-                    Label("Inspector", systemImage: "info.circle")
+                    Label(String(localized: "Inspector"), systemImage: "info.circle")
                 }
-                .help("Show or hide the inspector")
+                .help(String(localized: "Show or hide the inspector"))
             }
 
             ToolbarSpacer(.fixed, placement: .confirmationAction)
 
             ToolbarItem(placement: .confirmationAction) {
-                ToolbarSearchField(text: $viewState.searchText)
+                ToolbarSearchField(text: $viewState.searchText, isFocused: $searchFocused)
                     .frame(width: 220)
                     .padding(.horizontal, 8)
                     .frame(height: 36)
                     .glassEffect(.regular, in: .capsule)
+                    // The field's own focus ring follows its inner bezel, not
+                    // the capsule, so the capsule draws the focus instead.
+                    .overlay {
+                        Capsule()
+                            .strokeBorder(Color.accentColor.opacity(searchFocused ? 0.8 : 0), lineWidth: 3)
+                            .animation(.easeOut(duration: 0.15), value: searchFocused)
+                            .allowsHitTesting(false)
+                    }
+                    // The fixed toolbar spacer leaves a narrower gap than the
+                    // leading items' 8 pt; this matches them.
+                    .padding(.leading, 4)
             }
             .sharedBackgroundVisibility(.hidden)
         }
@@ -131,26 +148,38 @@ struct ContentView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: .addFontFolder)) { _ in
             // The File menu command is not tied to a window; only the frontmost
-            // library window navigates to the newly added folder, even while the
-            // PlayGround or another window is key.
+            // library window navigates to the newly added folder, even while
+            // another window is key.
             guard let window, window === LibraryWindows.frontmost else { return }
             window.makeKeyAndOrderFront(nil)
             catalog.addFolder { url in viewState.librarySelection = .folder(url) }
         }
         .task {
             viewState.restoreStartupState(from: settings)
-            viewState.reconcile(with: catalog)
+            viewState.reconcile(with: catalog, settings: settings)
         }
         .background(WindowAccessor {
             window = $0
-            if let window = $0 { LibraryWindows.register(window) }
+            if let window = $0 {
+                LibraryWindows.register(window)
+                // The toolbar holds custom controls with no labels, so it stays
+                // icon-only and offers no Icon and Text choice. SwiftUI attaches
+                // the toolbar after the window, hence the next turn.
+                DispatchQueue.main.async {
+                    window.toolbar?.allowsDisplayModeCustomization = false
+                    window.toolbar?.displayMode = .iconOnly
+                }
+            }
         })
+        .onChange(of: catalog.isLoading) { _, loading in
+            if !loading { viewState.reconcileDestination(with: catalog, settings: settings) }
+        }
         .onChange(of: catalog.familiesRevision) { _, _ in
-            viewState.reconcile(with: catalog)
+            viewState.reconcile(with: catalog, settings: settings)
         }
         .onChange(of: catalog.dataRevision) { _, _ in
             // Renaming or deleting a tag removes the destination the sidebar shows.
-            viewState.reconcileDestination(with: catalog)
+            viewState.reconcileDestination(with: catalog, settings: settings)
         }
         .onChange(of: viewState.librarySelection) { _, selection in
             settings.remember(location: selection)
@@ -171,7 +200,7 @@ struct ContentView: View {
             get: { catalog.errorMessage != nil && window != nil && window === LibraryWindows.frontmost },
             set: { if !$0 { catalog.errorMessage = nil } }
         )) {
-            Button("OK") { catalog.errorMessage = nil }
+            Button(String(localized: "OK")) { catalog.errorMessage = nil }
         } message: {
             Text(catalog.errorMessage ?? "")
         }
@@ -183,35 +212,59 @@ struct ContentView: View {
 /// is too wide for this library and sits at the trailing edge.
 private struct ToolbarSearchField: NSViewRepresentable {
     @Binding var text: String
+    @Binding var isFocused: Bool
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(text: $text)
+        Coordinator(text: $text, isFocused: $isFocused)
     }
 
-    func makeNSView(context: Context) -> NSSearchField {
-        let field = NSSearchField()
-        field.placeholderString = "Search"
+    func makeNSView(context: Context) -> FocusReportingSearchField {
+        let field = FocusReportingSearchField()
+        field.onFocus = { [coordinator = context.coordinator] in coordinator.isFocused.wrappedValue = true }
+        field.placeholderString = String(localized: "Search")
         field.delegate = context.coordinator
         field.sendsSearchStringImmediately = true
         // The clear button and Esc change the text without a text-change
         // notification; they only send the action.
         field.target = context.coordinator
         field.action = #selector(Coordinator.searchChanged(_:))
+        // The ring follows the field's inner bezel rather than the glass
+        // capsule around it, so the capsule draws the focus instead.
+        field.focusRingType = .none
         return field
     }
 
-    func updateNSView(_ field: NSSearchField, context: Context) {
+    func updateNSView(_ field: FocusReportingSearchField, context: Context) {
         context.coordinator.text = $text
+        context.coordinator.isFocused = $isFocused
         if field.stringValue != text {
             field.stringValue = text
         }
     }
 
+    /// Reports a click into the field; AppKit's begin-editing notice waits
+    /// for the first keystroke.
+    final class FocusReportingSearchField: NSSearchField {
+        var onFocus: (() -> Void)?
+
+        override func becomeFirstResponder() -> Bool {
+            let became = super.becomeFirstResponder()
+            if became { onFocus?() }
+            return became
+        }
+    }
+
     final class Coordinator: NSObject, NSSearchFieldDelegate {
         var text: Binding<String>
+        var isFocused: Binding<Bool>
 
-        init(text: Binding<String>) {
+        init(text: Binding<String>, isFocused: Binding<Bool>) {
             self.text = text
+            self.isFocused = isFocused
+        }
+
+        func controlTextDidEndEditing(_ notification: Notification) {
+            isFocused.wrappedValue = false
         }
 
         func controlTextDidChange(_ notification: Notification) {
@@ -227,8 +280,9 @@ private struct ToolbarSearchField: NSViewRepresentable {
     }
 }
 
-/// Compact preview-size control for the toolbar: small “A”, slider, large “A”.
-private struct PreviewSizeControl: View {
+/// Compact preview-size control for the toolbar with a slider and point input.
+/// Also used by the mixed-pair window for its own specimen size.
+struct PreviewSizeControl: View {
     @Binding var size: Double
 
     /// A continuous slider keeps the system from drawing step tick marks below
@@ -246,21 +300,95 @@ private struct PreviewSizeControl: View {
                 .font(.system(size: 9, weight: .medium))
                 .foregroundStyle(.secondary)
 
-            Slider(value: roundedSize, in: 18...72)
+            Slider(value: roundedSize, in: AppSettings.previewSizeRange)
                 .controlSize(.small)
                 .labelsHidden()
                 .frame(width: 96)
-                .accessibilityLabel("Preview size")
+                .accessibilityLabel(String(localized: "Preview size"))
+                // Double-clicking the slider returns to the default, as in
+                // many design apps; the context menu offers the same.
+                .simultaneousGesture(TapGesture(count: 2).onEnded { resetSize() })
 
-            Text("A")
-                .font(.system(size: 15, weight: .medium))
+            HStack(spacing: 3) {
+                PointSizeField(size: $size)
+                    .frame(width: 15, height: 14)
+                Text(verbatim: "pt")
+                    .font(.system(size: 10))
+            }
                 .foregroundStyle(.secondary)
         }
         .frame(height: 20)
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
+        .fixedSize(horizontal: true, vertical: false)
         .glassEffect(.regular, in: .capsule)
-        .help("Preview size: \(Int(size)) pt")
+        .help(String(localized: "Preview size: \(Int(size)) pt"))
+        .contextMenu {
+            Button(String(localized: "Reset to Default Size (\(Int(AppSettings.defaultPreviewSize)) pt)")) {
+                resetSize()
+            }
+            .disabled(size == AppSettings.defaultPreviewSize)
+        }
+    }
+
+    private func resetSize() {
+        size = AppSettings.defaultPreviewSize
+    }
+}
+
+/// The preview size as a typed number. An AppKit field draws its text and its
+/// field editor in the same frame; SwiftUI's plain field sets the edited text
+/// a little apart from the resting text. Return or leaving the field commits a
+/// size clamped to the slider's range, and Escape restores the current size.
+private struct PointSizeField: NSViewRepresentable {
+    @Binding var size: Double
+
+    func makeCoordinator() -> Coordinator { Coordinator(size: $size) }
+
+    func makeNSView(context: Context) -> NSTextField {
+        let field = NSTextField()
+        field.isBordered = false
+        field.drawsBackground = false
+        field.focusRingType = .none
+        field.font = .monospacedDigitSystemFont(ofSize: 11, weight: .regular)
+        field.textColor = .labelColor
+        field.cell?.usesSingleLineMode = true
+        field.cell?.isScrollable = true
+        field.delegate = context.coordinator
+        field.setAccessibilityLabel(String(localized: "Preview size"))
+        return field
+    }
+
+    func updateNSView(_ field: NSTextField, context: Context) {
+        context.coordinator.size = $size
+        let text = String(Int(size))
+        if field.currentEditor() == nil, field.stringValue != text {
+            field.stringValue = text
+        }
+    }
+
+    final class Coordinator: NSObject, NSTextFieldDelegate {
+        var size: Binding<Double>
+
+        init(size: Binding<Double>) {
+            self.size = size
+        }
+
+        func controlTextDidEndEditing(_ notification: Notification) {
+            guard let field = notification.object as? NSTextField else { return }
+            if let value = Double(field.stringValue), value.isFinite {
+                size.wrappedValue = min(max(value.rounded(), AppSettings.previewSizeRange.lowerBound),
+                                        AppSettings.previewSizeRange.upperBound)
+            }
+            field.stringValue = String(Int(size.wrappedValue))
+        }
+
+        func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
+            guard selector == #selector(NSResponder.cancelOperation(_:)) else { return false }
+            textView.string = String(Int(size.wrappedValue))
+            control.window?.makeFirstResponder(nil)
+            return true
+        }
     }
 }
 
@@ -271,16 +399,16 @@ private struct FontNameCopyItems: View {
     let family: FontFamily
 
     var body: some View {
-        Button("Family Name") {
+        Button(String(localized: "Family Name")) {
             catalog.copyStrings([family.name])
         }
-        Button("English Name") {
+        Button(String(localized: "English Name")) {
             catalog.copyStrings([family.localizedName])
         }
-        Button("PostScript Names") {
+        Button(String(localized: "PostScript Names")) {
             catalog.copyStrings(family.faces.map(\.postScriptName))
         }
-        Button("CSS font-family") {
+        Button(String(localized: "CSS font-family")) {
             catalog.copyStrings(["font-family: \"\(family.name)\";"])
         }
     }
@@ -295,19 +423,19 @@ private struct PreviewColorsControl: View {
             .overlay {
                 HStack(spacing: 0) {
                     SpecimenColorPicker(color: $settings.previewBackgroundColor,
-                                        fallback: Color(nsColor: .windowBackgroundColor), title: "Background Color") {
+                                        fallback: Color(nsColor: .windowBackgroundColor), title: String(localized: "Background Color")) {
                         Color.clear.frame(width: 27, height: 36).contentShape(.rect)
                     }
                     SpecimenColorPicker(color: $settings.previewTextColor,
-                                        fallback: Color(nsColor: .labelColor), title: "Text Color") {
+                                        fallback: Color(nsColor: .labelColor), title: String(localized: "Text Color")) {
                         Color.clear.frame(width: 27, height: 36).contentShape(.rect)
                     }
                 }
             }
             .contextMenu {
-                Button("System") { settings.setPreviewColors(background: nil, text: nil) }
-                Button("Light") { settings.setPreviewColors(background: .white, text: .black) }
-                Button("Dark") {
+                Button(String(localized: "System")) { settings.setPreviewColors(background: nil, text: nil) }
+                Button(String(localized: "Light")) { settings.setPreviewColors(background: .white, text: .black) }
+                Button(String(localized: "Dark")) {
                     settings.setPreviewColors(
                         background: Color(red: 0.11, green: 0.11, blue: 0.12), text: .white
                     )
@@ -351,6 +479,16 @@ private struct PreviewColorsControl: View {
 
 }
 
+private extension View {
+    /// Shows a sidebar add button only while the pointer is over its row or
+    /// header, so the rows read like their neighbors at rest. VoiceOver still
+    /// reaches the hidden button.
+    func revealedOnHover(_ visible: Bool) -> some View {
+        opacity(visible ? 1 : 0)
+            .allowsHitTesting(visible)
+    }
+}
+
 private struct Sidebar: View {
     @ObservedObject var catalog: FontCatalog
     @ObservedObject var viewState: LibraryViewState
@@ -364,10 +502,13 @@ private struct Sidebar: View {
     @FocusState private var newTagNameFocused: Bool
     @State private var tagBeingRenamed: String?
     @State private var renamedTagName = ""
+    @State private var isMixedRowHovered = false
+    @State private var isFoldersHeaderHovered = false
+    @State private var isTagsHeaderHovered = false
 
-    /// The font service sections the settings leave visible.
+    /// Show only detected services that the user has left visible.
     private var providerSections: [LibrarySection] {
-        FontProviderRegistry.all
+        catalog.availableProviders
             .filter { settings.isProviderSectionVisible($0.id) }
             .map { .provider($0) }
     }
@@ -377,7 +518,14 @@ private struct Sidebar: View {
             Section {
                 if settings.showAllSection { sectionRow(.all) }
                 if settings.showFavoritesSection { sectionRow(.favorites) }
-                if settings.showMixedSection { sectionRow(.mixed) }
+                if settings.showMixedSection { mixedRow }
+                if settings.showDuplicatesSection { sectionRow(.duplicates) }
+                if (settings.showAllSection || settings.showFavoritesSection
+                    || settings.showMixedSection || settings.showDuplicatesSection)
+                    && (settings.showSystemSection || settings.showLocalSection) {
+                    Divider()
+                        .selectionDisabled()
+                }
                 if settings.showSystemSection { systemGroup }
                 if settings.showLocalSection { sectionRow(.local) }
             }
@@ -388,7 +536,7 @@ private struct Sidebar: View {
                         sectionRow(section)
                     }
                 } header: {
-                    Text("Providers")
+                    Text(String(localized: "Providers"))
                         .foregroundStyle(Color(nsColor: .secondaryLabelColor))
                 }
             }
@@ -396,22 +544,30 @@ private struct Sidebar: View {
             Section {
                 if foldersExpanded {
                     if catalog.folders.isEmpty {
-                        SidebarLabel(title: "Drop folders here", systemImage: "plus")
+                        SidebarLabel(title: String(localized: "Drop folders here"), systemImage: "plus")
                             .foregroundStyle(.secondary)
                             .selectionDisabled()
                     } else {
                         OutlineGroup(catalog.folderTrees, children: \.children) { node in
-                            SidebarLabel(title: node.url.lastPathComponent, systemImage: "folder")
+                            Label {
+                                Text(verbatim: node.url.lastPathComponent)
+                                    .foregroundStyle(Color(nsColor: .labelColor))
+                            } icon: {
+                                FolderActivationControl(catalog: catalog, folder: node.url)
+                            }
+                                .font(.system(size: NSFont.systemFontSize))
                                 .lineLimit(1)
                                 .background(TableRowEmphasisConfigurator())
                                 .badge(selectedCount(for: .folder(node.url)))
                                 .tag(LibrarySelection.folder(node.url))
                                 .help(node.url.path)
                                 .contextMenu {
-                                    Button("Show in Finder") { catalog.revealFolder(node.url) }
+                                    FolderActivationActions(catalog: catalog, folder: node.url)
+                                    Divider()
+                                    Button(String(localized: "Show in Finder")) { catalog.revealFolder(node.url) }
                                     if catalog.folders.contains(where: { $0.standardizedFileURL == node.url.standardizedFileURL }) {
                                         Divider()
-                                        Button("Remove", role: .destructive) {
+                                        Button(String(localized: "Remove"), role: .destructive) {
                                             if case .folder(let selected) = viewState.librarySelection,
                                                selected.isContained(in: node.url) {
                                                 viewState.librarySelection = .section(.local)
@@ -425,7 +581,7 @@ private struct Sidebar: View {
                 }
             } header: {
                 HStack(spacing: 8) {
-                    Text("Folders")
+                    Text(String(localized: "Folders"))
                         .foregroundStyle(Color(nsColor: .secondaryLabelColor))
                     Spacer(minLength: 0)
                     headerControls {
@@ -435,14 +591,16 @@ private struct Sidebar: View {
                             Image(systemName: "folder.badge.plus")
                         }
                         .frame(width: 24, height: 24)
-                        .help("Add a font folder")
-                        .accessibilityLabel("Add a font folder")
+                        .help(String(localized: "Add a font folder"))
+                        .accessibilityLabel(String(localized: "Add a font folder"))
+                        .revealedOnHover(isFoldersHeaderHovered)
 
-                        disclosureButton(isExpanded: $foldersExpanded, title: "Folders")
+                        disclosureButton(isExpanded: $foldersExpanded, title: String(localized: "Folders"))
                     }
                 }
                 .padding(.trailing, 12)
                 .contentShape(Rectangle())
+                .onHover { isFoldersHeaderHovered = $0 }
             }
 
             if settings.showTagsSection {
@@ -454,15 +612,15 @@ private struct Sidebar: View {
                                 .badge(selectedCount(for: .tag(tag)))
                                 .tag(LibrarySelection.tag(tag))
                                 .contextMenu {
-                                    Button("Rename Tag…") { beginRenaming(tag) }
+                                    Button(String(localized: "Rename Tag…")) { beginRenaming(tag) }
                                     Divider()
-                                    Button("Delete Tag", role: .destructive) { deleteTag(tag) }
+                                    Button(String(localized: "Delete Tag"), role: .destructive) { deleteTag(tag) }
                                 }
                         }
                     }
                 } header: {
                     HStack(spacing: 8) {
-                        Text("Tags")
+                        Text(String(localized: "Tags"))
                             .foregroundStyle(Color(nsColor: .secondaryLabelColor))
                         Spacer(minLength: 0)
                         headerControls {
@@ -472,17 +630,20 @@ private struct Sidebar: View {
                                 Image(systemName: "plus")
                             }
                             .frame(width: 24, height: 24)
-                            .help("Add a tag")
-                            .accessibilityLabel("Add a tag")
+                            .help(String(localized: "Add a tag"))
+                            .accessibilityLabel(String(localized: "Add a tag"))
                             .popover(isPresented: $isAddingTag, arrowEdge: .top) {
                                 addTagForm
                             }
+                            // Stays visible while its popover is open.
+                            .revealedOnHover(isTagsHeaderHovered || isAddingTag)
 
-                            disclosureButton(isExpanded: $tagsExpanded, title: "Tags")
+                            disclosureButton(isExpanded: $tagsExpanded, title: String(localized: "Tags"))
                         }
                     }
                     .padding(.trailing, 12)
                     .contentShape(Rectangle())
+                    .onHover { isTagsHeaderHovered = $0 }
                 }
             }
         }
@@ -501,7 +662,10 @@ private struct Sidebar: View {
             // Hiding a destination moves the selection to the first row that is
             // still visible.
             guard !settings.isSidebarItemVisible(viewState.librarySelection),
-                  let fallback = sections.first else { return }
+                  let fallback = sections.first(where: { section in
+                      guard let provider = section.provider else { return true }
+                      return catalog.availableProviders.contains(where: { $0.id == provider.id })
+                  }) else { return }
             viewState.librarySelection = .section(fallback)
         }
         .onAppear {
@@ -518,12 +682,12 @@ private struct Sidebar: View {
         } isTargeted: { targeted in
             isDropTargeted = targeted
         }
-        .alert("Rename Tag", isPresented: renameTagAlertPresented) {
-            TextField("Name", text: $renamedTagName)
-            Button("Rename") { commitTagRename() }
-            Button("Cancel", role: .cancel) { tagBeingRenamed = nil }
+        .alert(String(localized: "Rename Tag"), isPresented: renameTagAlertPresented) {
+            TextField(String(localized: "Name"), text: $renamedTagName)
+            Button(String(localized: "Rename")) { commitTagRename() }
+            Button(String(localized: "Cancel"), role: .cancel) { tagBeingRenamed = nil }
         } message: {
-            Text("The tag is renamed on every font that uses it.")
+            Text(String(localized: "The tag is renamed on every font that uses it."))
         }
         .overlay {
             if isDropTargeted {
@@ -541,6 +705,28 @@ private struct Sidebar: View {
             .background(TableRowEmphasisConfigurator())
             .badge(selectedCount(for: selection))
             .tag(selection)
+    }
+
+    /// The Mixed Fonts row carries its add button, like the Folders and Tags
+    /// headers, and shows it the same way: on hover.
+    private var mixedRow: some View {
+        let selection = LibrarySelection.section(.mixed)
+        return HStack(spacing: 6) {
+            SidebarLabel(title: LibrarySection.mixed.title, icon: LibrarySection.mixed.icon)
+            Spacer(minLength: 6)
+            NewMixedPairButton(catalog: catalog)
+                .labelStyle(.iconOnly)
+                .buttonStyle(.borderless)
+                .controlSize(.small)
+                .foregroundStyle(Color(nsColor: .secondaryLabelColor))
+                .frame(width: 20, height: 24)
+                .revealedOnHover(isMixedRowHovered)
+        }
+        .contentShape(Rectangle())
+        .onHover { isMixedRowHovered = $0 }
+        .background(TableRowEmphasisConfigurator())
+        .badge(selectedCount(for: selection))
+        .tag(selection)
     }
 
     /// The System Fonts disclosure group, including its installation scopes.
@@ -581,11 +767,13 @@ private struct Sidebar: View {
     private func headerControls<Content: View>(
         @ViewBuilder content: () -> Content
     ) -> some View {
-        HStack(spacing: 8) {
+        // The buttons' 24pt frames already space the icons apart.
+        HStack(spacing: 0) {
             content()
         }
         .buttonStyle(.borderless)
         .controlSize(.small)
+        .foregroundStyle(Color(nsColor: .secondaryLabelColor))
     }
 
     private func disclosureButton(
@@ -601,26 +789,26 @@ private struct Sidebar: View {
                 .frame(width: 24, height: 24)
         }
         .frame(width: 24, height: 24)
-        .help(isExpanded.wrappedValue ? "Collapse \(title)" : "Expand \(title)")
-        .accessibilityLabel(isExpanded.wrappedValue ? "Collapse \(title)" : "Expand \(title)")
+        .help(isExpanded.wrappedValue ? String(localized: "Collapse \(title)") : String(localized: "Expand \(title)"))
+        .accessibilityLabel(isExpanded.wrappedValue ? String(localized: "Collapse \(title)") : String(localized: "Expand \(title)"))
     }
 
     private var addTagForm: some View {
         VStack(alignment: .leading, spacing: 14) {
             VStack(alignment: .leading, spacing: 4) {
-                Text("Name")
+                Text(String(localized: "Name"))
                     .font(.callout)
                     .foregroundStyle(.secondary)
-                TextField("e.g. serif, display, favorites", text: $newTagName)
+                TextField(String(localized: "e.g. serif, display, favorites"), text: $newTagName)
                     .textFieldStyle(.roundedBorder)
                     .focused($newTagNameFocused)
             }
 
             HStack {
-                Button("Cancel") { isAddingTag = false }
+                Button(String(localized: "Cancel")) { isAddingTag = false }
                     .keyboardShortcut(.cancelAction)
                 Spacer(minLength: 8)
-                Button("Add") { addTag() }
+                Button(String(localized: "Add")) { addTag() }
                     .keyboardShortcut(.defaultAction)
                     .disabled(trimmedNewTagName.isEmpty)
             }
@@ -682,16 +870,19 @@ private struct FontLibraryView: View {
     @Environment(\.undoManager) private var environmentUndoManager
     @FocusState private var listFocused: Bool
     @State private var expandedFamilyID: FontFamily.ID?
+    @State private var cleanupDuplicates: [FontDuplicate] = []
+    @State private var showsDuplicateCleanup = false
+    @State private var quickLook = QuickLookController()
 
     private var visibleIDs: [FontFamily.ID] {
         if isMixedSection { return filteredMixedPairs.map(\.selectionID) }
-        return viewState.filter(catalog: catalog, favoritesFirst: settings.favoritesFirst)
+        return viewState.filter(catalog: catalog, favoritesFirst: settings.favoritesFirst, activatedFirst: settings.activatedFirst)
             .ids
     }
 
     var body: some View {
         VStack(spacing: 0) {
-            let output = viewState.filter(catalog: catalog, favoritesFirst: settings.favoritesFirst)
+            let output = viewState.filter(catalog: catalog, favoritesFirst: settings.favoritesFirst, activatedFirst: settings.activatedFirst)
             if isMixedSection {
                 mixedPairsContent
             } else if output.families.isEmpty {
@@ -702,6 +893,7 @@ private struct FontLibraryView: View {
                         FontFamilyRow(
                             family: family,
                             isExpanded: expandedFamilyID == family.id,
+                            isUpdatingActivation: catalog.isUpdatingActivation,
                             previewText: settings.effectivePreviewText(for: family, entered: viewState.previewText),
                             previewSize: settings.previewSize,
                             previewTextColor: settings.previewTextColor,
@@ -710,13 +902,23 @@ private struct FontLibraryView: View {
                             isFavorite: catalog.isFavorite(family),
                             variations: settings.variationValues(for: family.faces),
                             toggleExpanded: { toggleExpanded(family) },
-                            toggleFavorite: { catalog.toggleFavorite(family) },
+                            toggleFavorite: {
+                                let targets = viewState.selection.contains(family.id)
+                                    ? output.families.filter { viewState.selection.contains($0.id) }
+                                    : [family]
+                                catalog.setFavorite(!targets.allSatisfy { catalog.isFavorite($0) }, families: targets)
+                            },
                             toggleEnabled: {
                                 setEnabled(!family.isEnabled || family.isPartiallyEnabled, families: [family])
                             },
                             toggleFaceEnabled: { face in
                                 setEnabled(!face.isInstalled, faces: [face], in: family)
-                            }
+                            },
+                            loadVariableInfo: { await catalog.variableInfo(for: $0) },
+                            setVariation: { value, tag, face in
+                                settings.setVariation(value, tag: tag, for: face.postScriptName)
+                            },
+                            resetVariations: { settings.resetVariations(for: $0.postScriptName) }
                         )
                             .equatable()
                             .tag(family.id)
@@ -729,7 +931,23 @@ private struct FontLibraryView: View {
                 .listStyle(.inset)
                 .environment(\.controlActiveState, .key)
                 .focused($listFocused)
-                .simultaneousGesture(TapGesture().onEnded { listFocused = true })
+                // Space toggles Quick Look as in Finder; the panel follows the
+                // selection, so the arrow keys keep moving through the list.
+                .onKeyPress(.space) {
+                    quickLook.toggle(catalog: catalog, viewState: viewState, settings: settings)
+                    return .handled
+                }
+                .onKeyPress(.escape) {
+                    guard quickLook.isVisible else { return .ignored }
+                    quickLook.close()
+                    return .handled
+                }
+                .simultaneousGesture(TapGesture().onEnded {
+                    // A click into a field in a row, such as an axis value,
+                    // has already given it the keyboard; don't take it back.
+                    if let editor = NSApp.keyWindow?.firstResponder as? NSTextView, editor.isFieldEditor { return }
+                    listFocused = true
+                })
                 .onChange(of: viewState.selection) { _, selection in
                     // Styles stay expanded only for the selected font.
                     guard let expanded = expandedFamilyID, selection != [expanded] else { return }
@@ -743,6 +961,9 @@ private struct FontLibraryView: View {
         .safeAreaInset(edge: .bottom, spacing: 0) {
             previewTextEditor
         }
+        .sheet(isPresented: $showsDuplicateCleanup) {
+            DuplicateCleanupView(catalog: catalog, duplicates: cleanupDuplicates)
+        }
         // The chosen background paints the whole font list area, so specimens
         // sit directly on it. The inspector keeps the system surface.
         .background(canvasColor)
@@ -752,6 +973,7 @@ private struct FontLibraryView: View {
             viewState.updateCoverage(catalog: catalog)
         }
         .onAppear { reconcileSelection() }
+        .onDisappear { quickLook.close() }
         .onChange(of: visibleIDs) { _, ids in
             reconcileSelection(with: ids)
         }
@@ -792,21 +1014,51 @@ private struct FontLibraryView: View {
         let targets = families.filter { ids.contains($0.id) }
         let fileURLs = Array(Set(targets.flatMap(\.fileURLs))).sorted { $0.path < $1.path }
         if let family = targets.first {
-            Button(activationTitle("Activate", count: targets.count)) {
+            Button(String(localized: "Quick Look")) {
+                if !ids.isSubset(of: viewState.selection) { viewState.selection = [family.id] }
+                quickLook.show(catalog: catalog, viewState: viewState, settings: settings)
+            }
+            Divider()
+            let duplicates = targets.flatMap { catalog.duplicatesByFamily[$0.id] ?? [] }
+            if !duplicates.isEmpty {
+                Button(String(localized: "Clean Up Duplicates…")) {
+                    cleanupDuplicates = duplicates
+                    showsDuplicateCleanup = true
+                }
+                .disabled(catalog.isLoading || catalog.isUpdatingActivation)
+                Divider()
+            }
+            Button(String(localized: "Activate \(targets.count) Fonts")) {
                 setEnabled(true, families: targets)
             }
-            .disabled(!targets.contains(where: \.canActivate))
+            .disabled(catalog.isUpdatingActivation || !targets.contains(where: \.canActivate))
 
-            Button(activationTitle("Deactivate", count: targets.count)) {
+            Button(String(localized: "Deactivate \(targets.count) Fonts")) {
                 setEnabled(false, families: targets)
             }
-            .disabled(!targets.contains(where: \.canDeactivate))
+            .disabled(catalog.isUpdatingActivation || !targets.contains(where: \.canDeactivate))
 
             Divider()
 
-            Menu("Tags") {
+            Button {
+                catalog.setFavorite(true, families: targets)
+            } label: {
+                Label(String(localized: "Add to Favorites"), systemImage: "star")
+            }
+            .disabled(targets.allSatisfy { catalog.isFavorite($0) })
+
+            Button {
+                catalog.setFavorite(false, families: targets)
+            } label: {
+                Label(String(localized: "Remove from Favorites"), systemImage: "star.slash")
+            }
+            .disabled(!targets.contains { catalog.isFavorite($0) })
+
+            Divider()
+
+            Menu(String(localized: "Tags")) {
                 if catalog.allTags.isEmpty {
-                    Text("No Tags")
+                    Text(String(localized: "No Tags"))
                 }
                 ForEach(catalog.allTags, id: \.self) { tag in
                     Toggle(tag, isOn: tagBinding(tag, families: targets))
@@ -815,19 +1067,19 @@ private struct FontLibraryView: View {
 
             Divider()
 
-            Button("Show in Finder") {
+            Button(String(localized: "Show in Finder")) {
                 catalog.revealFiles(fileURLs)
             }
             .disabled(fileURLs.isEmpty)
 
-            Button("Copy Path") {
+            Button(String(localized: "Copy Path")) {
                 catalog.copyPaths(fileURLs)
             }
             .disabled(fileURLs.isEmpty)
 
             Divider()
 
-            Menu("Copy Name") {
+            Menu(String(localized: "Copy Name")) {
                 FontNameCopyItems(family: family)
             }
             .disabled(targets.count != 1)
@@ -861,7 +1113,7 @@ private struct FontLibraryView: View {
             // does not outline the row.
             .contextMenu(forSelectionType: FontFamily.ID.self) { ids in
                 let targets = pairs.filter { ids.contains($0.selectionID) }
-                Button(targets.count > 1 ? "Delete \(targets.count) Pairs" : "Delete", role: .destructive) {
+                Button(targets.count > 1 ? String(localized: "Delete \(targets.count) Pairs") : String(localized: "Delete"), role: .destructive) {
                     targets.forEach(deleteMixedPair)
                 }
                 .disabled(targets.isEmpty)
@@ -930,18 +1182,20 @@ private struct FontLibraryView: View {
     private var mixedEmptyState: some View {
         if catalog.mixedPairs.isEmpty {
             ContentUnavailableView {
-                Label("No mixed pairs yet", systemImage: "rectangle.on.rectangle")
+                Label(String(localized: "No mixed pairs yet"), image: "mixed.font")
             } description: {
-                Text("Use the toolbar’s Mixed Font button to pair a Japanese font with a Latin one.")
+                Text(String(localized: "Pair a Japanese font with a Latin one."))
             } actions: {
-                Button("Show All Fonts") { viewState.librarySelection = .section(.all) }
+                NewMixedPairButton(catalog: catalog)
+                    .labelStyle(.titleOnly)
+                Button(String(localized: "Show All Fonts")) { viewState.librarySelection = .section(.all) }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
             ContentUnavailableView {
-                Label("No pairs match", systemImage: "line.3.horizontal.decrease.circle")
+                Label(String(localized: "No pairs match"), systemImage: "line.3.horizontal.decrease.circle")
             } description: {
-                Text("Change the search text.")
+                Text(String(localized: "Change the search text."))
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
@@ -960,7 +1214,7 @@ private struct FontLibraryView: View {
         catalog.removeMixedPair(pair)
         if wasSelected {
             viewState.selection = []
-            viewState.reconcile(with: catalog)
+            viewState.reconcile(with: catalog, settings: settings)
         }
     }
 
@@ -993,20 +1247,20 @@ private struct FontLibraryView: View {
                 VStack(spacing: 12) {
                     ProgressView()
                         .controlSize(.small)
-                    Text("Loading fonts…")
+                    Text(String(localized: "Loading fonts…"))
                         .foregroundStyle(.secondary)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if catalog.families.isEmpty {
                 ContentUnavailableView {
-                    Label("No fonts in the library", systemImage: "textformat")
+                    Label(String(localized: "No fonts in the library"), systemImage: "textformat")
                 } description: {
-                    Text("Installed fonts are read automatically. Add a folder to include the font files stored on disk.")
+                    Text(String(localized: "Installed fonts are read automatically. Add a folder to include the font files stored on disk."))
                 } actions: {
-                    Button("Add Font Folder…") {
+                    Button(String(localized: "Add Font Folder…")) {
                         catalog.addFolder { url in viewState.librarySelection = .folder(url) }
                     }
-                    Button("Refresh") { catalog.refresh() }
+                    Button(String(localized: "Refresh")) { catalog.refresh() }
                 }
             } else if output.sectionIsEmpty {
                 ContentUnavailableView {
@@ -1022,23 +1276,23 @@ private struct FontLibraryView: View {
                     Text(emptySectionMessage)
                 } actions: {
                     if viewState.librarySelection == .section(.local) {
-                        Button("Add Font Folder…") {
+                        Button(String(localized: "Add Font Folder…")) {
                             catalog.addFolder { url in viewState.librarySelection = .folder(url) }
                         }
                     }
-                    Button("Show All Fonts") { viewState.librarySelection = .section(.all) }
+                    Button(String(localized: "Show All Fonts")) { viewState.librarySelection = .section(.all) }
                 }
             } else {
                 ContentUnavailableView {
-                    Label("No fonts match", systemImage: "line.3.horizontal.decrease.circle")
+                    Label(String(localized: "No fonts match"), systemImage: "line.3.horizontal.decrease.circle")
                 } description: {
-                    Text(filterSummary.isEmpty ? "Change the search text or filters." : filterSummary)
+                    Text(filterSummary.isEmpty ? String(localized: "Change the search text or filters.") : filterSummary)
                 } actions: {
                     if hasActiveToolbarFilters {
-                        Button("Clear Filters") { viewState.clearFilters() }
+                        Button(String(localized: "Clear Filters")) { viewState.clearFilters() }
                     }
                     if !activeCoverageText.isEmpty {
-                        Button("Clear Preview Text") { viewState.previewText = "" }
+                        Button(String(localized: "Clear Preview Text")) { viewState.previewText = "" }
                     }
                 }
             }
@@ -1049,10 +1303,10 @@ private struct FontLibraryView: View {
     private var filterSummary: String {
         var parts: [String] = []
         let query = viewState.searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !query.isEmpty { parts.append("Search: “\(query)”") }
-        if let category = viewState.category { parts.append("Category: \(category.title)") }
-        if viewState.activationFilter != .all { parts.append("Status: \(viewState.activationFilter.title)") }
-        if !activeCoverageText.isEmpty { parts.append("Contains: “\(activeCoverageText)”") }
+        if !query.isEmpty { parts.append(String(localized: "Search: “\(query)”")) }
+        if let category = viewState.category { parts.append(String(localized: "Category: \(category.title)")) }
+        if viewState.activationFilter != .all { parts.append(String(localized: "Status: \(viewState.activationFilter.title)")) }
+        if !activeCoverageText.isEmpty { parts.append(String(localized: "Contains: “\(activeCoverageText)”")) }
         return parts.joined(separator: " · ")
     }
 
@@ -1070,15 +1324,16 @@ private struct FontLibraryView: View {
     private var emptySectionTitle: String {
         switch viewState.librarySelection {
         case .section(let section):
-            if let provider = section.provider { return "No \(provider.title)" }
+            if let provider = section.provider { return String(localized: "No \(provider.title)") }
             switch section {
-            case .favorites: return "No favorites yet"
-            case .local: return "No local fonts"
-            default: return "No fonts"
+            case .favorites: return String(localized: "No favorites yet")
+            case .local: return String(localized: "No local fonts")
+            case .duplicates: return String(localized: "No duplicates")
+            default: return String(localized: "No fonts")
             }
-        case .folder(let folder): return "No fonts in \(folder.lastPathComponent)"
-        case .systemScope(let scope): return "No fonts for \(scope.title)"
-        case .tag(let tag): return "No fonts tagged “\(tag)”"
+        case .folder(let folder): return String(localized: "No fonts in \(folder.lastPathComponent)")
+        case .systemScope(let scope): return String(localized: "No fonts for \(scope.title)")
+        case .tag(let tag): return String(localized: "No fonts tagged “\(tag)”")
         }
     }
 
@@ -1087,13 +1342,14 @@ private struct FontLibraryView: View {
         case .section(let section):
             if let provider = section.provider { return provider.emptyMessage }
             switch section {
-            case .favorites: return "Select a font and click the star to keep it here."
-            case .local: return "Add a folder that contains font files to browse them without installing."
-            default: return "Change the search text or filters."
+            case .favorites: return String(localized: "Select a font and click the star to keep it here.")
+            case .local: return String(localized: "Add a folder that contains font files to browse them without installing.")
+            case .duplicates: return String(localized: "No font file shares a PostScript name with another file.")
+            default: return String(localized: "Change the search text or filters.")
             }
-        case .folder: return "This folder does not contain any supported font files."
-        case .systemScope: return "No fonts were found in this installation scope."
-        case .tag: return "Assign the tag to a font from the row’s context menu, or delete the tag in the sidebar."
+        case .folder: return String(localized: "This folder does not contain any supported font files.")
+        case .systemScope: return String(localized: "No fonts were found in this installation scope.")
+        case .tag: return String(localized: "Assign the tag to a font from the row’s context menu, or delete the tag in the sidebar.")
         }
     }
 
@@ -1111,10 +1367,6 @@ private struct FontLibraryView: View {
 
     private func setEnabled(_ enabled: Bool, faces: [FontFace], in family: FontFamily) {
         catalog.setEnabled(enabled, faces: faces, in: family, undoManager: activeUndoManager)
-    }
-
-    private func activationTitle(_ action: String, count: Int) -> String {
-        count > 1 ? "\(action) \(count) Fonts" : action
     }
 
     /// Toggles an existing tag on every targeted family; the menu shows a
@@ -1159,6 +1411,7 @@ private let activationTint = Color.green
 private struct FontFamilyRow: View, Equatable {
     let family: FontFamily
     let isExpanded: Bool
+    let isUpdatingActivation: Bool
     let previewText: String
     let previewSize: Double
     let previewTextColor: Color?
@@ -1171,10 +1424,23 @@ private struct FontFamilyRow: View, Equatable {
     let toggleFavorite: () -> Void
     let toggleEnabled: () -> Void
     let toggleFaceEnabled: (FontFace) -> Void
+    let loadVariableInfo: (FontFace) async -> VariableFontInfo?
+    let setVariation: (Double, UInt32, FontFace) -> Void
+    let resetVariations: (FontFace) -> Void
+    /// Whether the expanded row shows axis controls instead of the style list.
+    @State private var expandedContent: ExpandedContent = .unknown
+
+    private enum ExpandedContent {
+        /// Still reading the faces; the row keeps its collapsed specimen.
+        case unknown
+        case styles
+        case axes(VariableFamilyAxes)
+    }
 
     static func == (lhs: FontFamilyRow, rhs: FontFamilyRow) -> Bool {
         lhs.family == rhs.family
             && lhs.isExpanded == rhs.isExpanded
+            && lhs.isUpdatingActivation == rhs.isUpdatingActivation
             && lhs.previewText == rhs.previewText
             && lhs.previewSize == rhs.previewSize
             && lhs.previewTextColor == rhs.previewTextColor
@@ -1192,7 +1458,7 @@ private struct FontFamilyRow: View, Equatable {
                     Text(family.name)
                         .font(.body.weight(.medium))
                         .lineLimit(1)
-                    Text("\(family.faces.count) \(family.faces.count == 1 ? "style" : "styles")")
+                    Text(String(localized: "\(family.faces.count) styles"))
                         .font(.callout)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
@@ -1211,57 +1477,28 @@ private struct FontFamilyRow: View, Equatable {
                     Image(systemName: isFavorite ? "star.fill" : "star")
                 }
                 .buttonStyle(.borderless)
-                .help("Favorite")
+                .help(String(localized: "Favorite"))
             }
             if isExpanded {
-                VStack(alignment: .leading, spacing: 14) {
-                    ForEach(family.faces) { face in
-                        VStack(alignment: .leading, spacing: 4) {
-                            HStack(spacing: 8) {
-                                if face.isManaged {
-                                    Button {
-                                        toggleFaceEnabled(face)
-                                    } label: {
-                                        Image(systemName: face.isInstalled ? "circle.fill" : "circle")
-                                            .font(.callout)
-                                            .foregroundStyle(face.isInstalled ? activationTint : Color.secondary)
-                                    }
-                                    .buttonStyle(.borderless)
-                                    .help(face.isInstalled ? "Deactivate" : "Activate")
-                                    .frame(width: 16)
-                                } else {
-                                    ActivationLock(hint: faceLockHint)
-                                }
-                                Text(face.styleName)
-                                    .font(.callout)
-                                    .foregroundStyle(.secondary)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                    .togglesOnDoubleClick(toggleExpanded)
-                            }
-                            FontPreviewText(
-                                text: previewText,
-                                postScriptName: face.postScriptName,
-                                fileURL: face.fileURL,
-                                size: previewSize,
-                                variations: variations[face.id],
-                                textColor: previewTextColor
-                            )
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .togglesOnDoubleClick(toggleExpanded)
-                        }
-                    }
+                switch expandedContent {
+                case .unknown:
+                    collapsedSpecimen
+                case .styles:
+                    styleList
+                case .axes(let axes):
+                    VariableAxesPanel(
+                        axes: axes,
+                        stored: variations[axes.face.id] ?? [:],
+                        previewText: previewText,
+                        previewSize: previewSize,
+                        previewTextColor: previewTextColor,
+                        toggleExpanded: toggleExpanded,
+                        setVariation: { value, tag in setVariation(value, tag, axes.face) },
+                        reset: { resetVariations(axes.face) }
+                    )
                 }
             } else {
-                FontPreviewText(
-                    text: previewText,
-                    postScriptName: family.previewFace?.postScriptName,
-                    fileURL: family.previewFace?.fileURL,
-                    size: previewSize,
-                    variations: family.previewFace.flatMap { variations[$0.id] },
-                    textColor: previewTextColor
-                )
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .togglesOnDoubleClick(toggleExpanded)
+                collapsedSpecimen
             }
         }
         .padding(.horizontal, 12)
@@ -1278,7 +1515,82 @@ private struct FontFamilyRow: View, Equatable {
             hidesSelectionHighlight: selectionTint != nil
         ))
         .contentShape(.rect)
-        .help(isExpanded ? "Double-click to hide styles" : "Double-click to show styles")
+        .help(isExpanded ? String(localized: "Double-click to hide styles") : String(localized: "Double-click to show styles"))
+        .task(id: isExpanded ? family : nil) { await loadExpandedContent() }
+    }
+
+    private var collapsedSpecimen: some View {
+        FontPreviewText(
+            text: previewText,
+            postScriptName: family.previewFace?.postScriptName,
+            fileURL: family.previewFace?.fileURL,
+            size: previewSize,
+            variations: family.previewFace.flatMap { variations[$0.id] },
+            textColor: previewTextColor
+        )
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .togglesOnDoubleClick(toggleExpanded)
+    }
+
+    private var styleList: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            ForEach(family.faces) { face in
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 8) {
+                        if face.isManaged {
+                            Button {
+                                toggleFaceEnabled(face)
+                            } label: {
+                                Image(systemName: face.isInstalled ? "circle.fill" : "circle")
+                                    .font(.callout)
+                                    .foregroundStyle(face.isInstalled ? activationTint : Color.secondary)
+                            }
+                            .buttonStyle(.borderless)
+                            .disabled(isUpdatingActivation)
+                            .help(face.isInstalled ? String(localized: "Deactivate") : String(localized: "Activate"))
+                            .frame(width: 16)
+                        } else {
+                            ActivationLock(hint: faceLockHint)
+                        }
+                        Text(face.styleName)
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .togglesOnDoubleClick(toggleExpanded)
+                    }
+                    FontPreviewText(
+                        text: previewText,
+                        postScriptName: face.postScriptName,
+                        fileURL: face.fileURL,
+                        size: previewSize,
+                        variations: variations[face.id],
+                        textColor: previewTextColor
+                    )
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .togglesOnDoubleClick(toggleExpanded)
+                }
+            }
+        }
+    }
+
+    /// A family is adjusted on its axes when every style is an instance of a
+    /// variable font; a family mixing static files keeps the style list.
+    private func loadExpandedContent() async {
+        guard isExpanded, let previewFace = family.previewFace else { return }
+        guard let info = await loadVariableInfo(previewFace) else {
+            expandedContent = .styles
+            return
+        }
+        var instances: [VariableInstance] = []
+        for face in family.faces {
+            guard let faceInfo = await loadVariableInfo(face) else {
+                expandedContent = .styles
+                return
+            }
+            instances.append(VariableInstance(face: face, values: faceInfo.currentValues))
+        }
+        guard !Task.isCancelled else { return }
+        expandedContent = .axes(VariableFamilyAxes(face: previewFace, info: info, instances: instances))
     }
 
     @ViewBuilder
@@ -1292,6 +1604,8 @@ private struct FontFamilyRow: View, Equatable {
                     .foregroundStyle(activationColor)
             }
             .buttonStyle(.borderless)
+            .disabled(isUpdatingActivation)
+            .accessibilityLabel(activationHelp)
             .help(activationHelp)
             .frame(width: 16)
         } else {
@@ -1309,8 +1623,8 @@ private struct FontFamilyRow: View, Equatable {
     }
 
     private var activationHelp: String {
-        if family.isPartiallyEnabled { return "Some styles are disabled — click to enable all" }
-        return family.isEnabled ? "Deactivate" : "Activate"
+        if family.isPartiallyEnabled { return String(localized: "Some styles are disabled — click to enable all") }
+        return family.isEnabled ? String(localized: "Deactivate") : String(localized: "Activate")
     }
 
     /// A face outside the added folder is installed on this Mac, even when the
@@ -1324,8 +1638,7 @@ private struct FontFamilyRow: View, Equatable {
 
 /// Uses AppKit's native selection paint: gray in the sidebar, emphasized in
 /// the font list. While a custom canvas color is set the system paint is
-/// suppressed, so the row's own veil is the only selection mark. The PlayGround
-/// canvas reuses the same behavior for its blocks.
+/// suppressed, so the row's own veil is the only selection mark.
 struct TableRowEmphasisConfigurator: NSViewRepresentable {
     var isEmphasized = false
     var hidesSelectionHighlight = false
@@ -1418,6 +1731,218 @@ private struct ActivationLock: View {
     }
 }
 
+/// A named instance of a variable family and its own axis coordinates.
+private struct VariableInstance: Identifiable {
+    let face: FontFace
+    let values: [UInt32: Double]
+
+    var id: FontFace.ID { face.id }
+}
+
+/// The axes an expanded variable family is adjusted on. The adjustments are
+/// stored on the preview face, the one the collapsed row and inspector draw.
+private struct VariableFamilyAxes {
+    let face: FontFace
+    let info: VariableFontInfo
+    let instances: [VariableInstance]
+}
+
+/// The expanded row of a variable family: a live specimen, the named
+/// instances to start from, and a slider per axis.
+private struct VariableAxesPanel: View {
+    let axes: VariableFamilyAxes
+    /// The stored adjustments of the preview face; empty at its own instance.
+    let stored: [UInt32: Double]
+    let previewText: String
+    let previewSize: Double
+    let previewTextColor: Color?
+    let toggleExpanded: () -> Void
+    let setVariation: (Double, UInt32) -> Void
+    let reset: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            FontPreviewText(
+                text: previewText,
+                postScriptName: axes.face.postScriptName,
+                fileURL: axes.face.fileURL,
+                size: previewSize,
+                variations: stored.isEmpty ? nil : stored,
+                textColor: previewTextColor
+            )
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .togglesOnDoubleClick(toggleExpanded)
+
+            HStack(spacing: 8) {
+                if axes.instances.count > 1 {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 6) {
+                            ForEach(axes.instances) { instance in
+                                instanceButton(instance)
+                            }
+                        }
+                    }
+                } else {
+                    Spacer(minLength: 0)
+                }
+                Button(String(localized: "Reset")) { reset() }
+                    .controlSize(.small)
+                    .disabled(stored.isEmpty)
+                    .help(String(localized: "Return to the style's own axis values"))
+            }
+
+            // Axes flow into as many columns as the row is wide, so wide
+            // windows show them side by side instead of leaving the right
+            // half empty.
+            LazyVGrid(
+                columns: [GridItem(.adaptive(minimum: 280), spacing: 40, alignment: .leading)],
+                alignment: .leading,
+                spacing: 10
+            ) {
+                ForEach(axes.info.axes) { axis in
+                    axisRow(axis)
+                }
+            }
+            .padding(.top, 6)
+            .padding(.bottom, 4)
+        }
+    }
+
+    /// One axis: its name, a slider, and a field to type an exact value.
+    private func axisRow(_ axis: VariableFontAxis) -> some View {
+        HStack(spacing: 8) {
+            Text(axis.name)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .frame(width: 88, alignment: .leading)
+                .help(axis.tagString)
+            Slider(value: binding(for: axis), in: axis.minimum...axis.maximum)
+                .controlSize(.small)
+                .labelsHidden()
+                .accessibilityLabel(axis.name)
+            AxisValueField(
+                axis: axis,
+                value: value(for: axis),
+                display: valueText,
+                commit: { setVariation($0, axis.tag) }
+            )
+        }
+    }
+
+    /// Starts from a named instance: the preview face's own instance clears
+    /// the adjustments, any other copies its coordinates onto the shared axes.
+    @ViewBuilder
+    private func instanceButton(_ instance: VariableInstance) -> some View {
+        let button = Button(instance.face.styleName) {
+            if instance.face.id == axes.face.id {
+                reset()
+            } else {
+                for axis in axes.info.axes {
+                    if let value = instance.values[axis.tag] { setVariation(value, axis.tag) }
+                }
+            }
+        }
+        .controlSize(.small)
+        if matches(instance) {
+            button.buttonStyle(.borderedProminent)
+        } else {
+            button.buttonStyle(.bordered)
+        }
+    }
+
+    private func matches(_ instance: VariableInstance) -> Bool {
+        axes.info.axes.allSatisfy { axis in
+            let target = instance.values[axis.tag] ?? axis.defaultValue
+            return abs(value(for: axis) - target) < 0.5
+        }
+    }
+
+    private func value(for axis: VariableFontAxis) -> Double {
+        stored[axis.tag] ?? axes.info.currentValues[axis.tag] ?? axis.defaultValue
+    }
+
+    private func binding(for axis: VariableFontAxis) -> Binding<Double> {
+        Binding(
+            get: { value(for: axis) },
+            // Typed values can fall outside the axis.
+            set: { setVariation(min(max($0, axis.minimum), axis.maximum), axis.tag) }
+        )
+    }
+
+    private func valueText(_ value: Double) -> String {
+        value.rounded() == value ? String(Int(value)) : String(format: "%.1f", value)
+    }
+}
+
+/// The exact value of one axis. Only a number can be typed; it is applied,
+/// within the axis, on Return or when the field loses focus, and anything
+/// that doesn't read as a number returns to the current value.
+private struct AxisValueField: View {
+    let axis: VariableFontAxis
+    let value: Double
+    let display: (Double) -> String
+    let commit: (Double) -> Void
+
+    @State private var text = ""
+    @FocusState private var isFocused: Bool
+
+    var body: some View {
+        TextField(axis.name, text: $text)
+            .textFieldStyle(.plain)
+            .font(.callout)
+            .monospacedDigit()
+            .multilineTextAlignment(.trailing)
+            .labelsHidden()
+            .frame(width: 44)
+            .focused($isFocused)
+            .help("\(display(axis.minimum))–\(display(axis.maximum))")
+            .accessibilityLabel(axis.name)
+            .onAppear { text = display(value) }
+            .onChange(of: value) { _, newValue in
+                if !isFocused { text = display(newValue) }
+            }
+            .onChange(of: text) { _, newText in
+                let filtered = Self.numeric(newText)
+                if filtered != newText { text = filtered }
+            }
+            .onChange(of: isFocused) { _, focused in
+                if !focused { apply() }
+            }
+            .onSubmit(apply)
+            .onExitCommand {
+                text = display(value)
+                isFocused = false
+            }
+    }
+
+    private func apply() {
+        if let typed = Double(text) {
+            let clamped = min(max(typed, axis.minimum), axis.maximum)
+            if clamped != value { commit(clamped) }
+            text = display(clamped)
+        } else {
+            text = display(value)
+        }
+    }
+
+    /// Keeps digits, one decimal point, and a minus sign at the start.
+    private static func numeric(_ text: String) -> String {
+        var result = ""
+        for character in text {
+            if character.isASCII, character.isNumber {
+                result.append(character)
+            } else if character == "." || character == "．", !result.contains(".") {
+                result.append(".")
+            } else if character == "-" || character == "−", result.isEmpty {
+                result.append("-")
+            }
+        }
+        return result
+    }
+}
+
 private struct FontInspector: View {
     @ObservedObject var catalog: FontCatalog
     @ObservedObject var viewState: LibraryViewState
@@ -1426,6 +1951,7 @@ private struct FontInspector: View {
     @State private var missingCharacters: [String] = []
     @State private var variableAxes: VariableAxesState?
     @State private var metadata: FontNameTable.Metadata?
+    @Environment(\.openWindow) private var openWindow
 
     /// The size of the inspector's specimen; also the point size the variable
     /// axis values are read at, so the sliders match what the specimen shows.
@@ -1452,24 +1978,33 @@ private struct FontInspector: View {
                                     .foregroundStyle(.secondary)
                                     .textSelection(.enabled)
                             }
-                            Text(family.manufacturer)
+                            Text(family.manufacturer == "Unknown" ? String(localized: "Unknown") : family.manufacturer)
                                 .foregroundStyle(.secondary)
                                 .textSelection(.enabled)
                         }
 
                         Spacer(minLength: 8)
 
-                        Menu {
-                            FontNameCopyItems(family: family)
-                        } label: {
-                            Label("Copy Name", systemImage: "doc.on.doc")
-                                .labelStyle(.iconOnly)
+                        // Both header actions share one row and a 24 pt slot so
+                        // they line up. A Menu ignores a dimmed foreground
+                        // style, so neither label sets one.
+                        HStack(spacing: 2) {
+                            if let duplicates = catalog.duplicatesByFamily[family.id] {
+                                DuplicateFilesSection(catalog: catalog, duplicates: duplicates)
+                            }
+
+                            Menu {
+                                FontNameCopyItems(family: family)
+                            } label: {
+                                InspectorHeaderIcon(Image(systemName: "doc.on.doc"), title: String(localized: "Copy Name"))
+                            }
+                            .menuStyle(.button)
+                            .buttonStyle(.borderless)
+                            .menuIndicator(.hidden)
+                            .fixedSize()
+                            .frame(width: 24, height: 24)
+                            .help(String(localized: "Copy the font names"))
                         }
-                        .menuStyle(.button)
-                        .buttonStyle(.borderless)
-                        .menuIndicator(.hidden)
-                        .fixedSize()
-                        .help("Copy the font names")
                     }
 
                     // The inspector's specimen always follows the system
@@ -1487,14 +2022,23 @@ private struct FontInspector: View {
                         missingCharactersNotice
                     }
 
-                    Group {
-                        inspectorDetail("Source", family.source.title)
-                        inspectorDetail("Language", family.languageDescription)
-                        inspectorDetail("Styles", "\(family.faces.count)")
-                    }
+                    inspectorDetail(String(localized: "Classification"), family.category.title)
+                    inspectorDetail(String(localized: "Language"), family.languageDescription)
+                    inspectorDetail(String(localized: "Styles"), "\(family.faces.count)")
 
-                    if let metadata {
-                        metadataSection(metadata)
+                    inspectorDetail(String(localized: "Glyphs")) {
+                        HStack {
+                            Text(metadata?.glyphCount?.formatted() ?? "—")
+                                .font(.callout)
+                                .textSelection(.enabled)
+                            Spacer(minLength: 12)
+                            Button(String(localized: "Browse Glyphs")) {
+                                openWindow(id: GlyphWindow.id, value: family.id)
+                            }
+                            .controlSize(.small)
+                            .disabled(family.previewFace == nil)
+                            .help(String(localized: "Show every character this font can display"))
+                        }
                     }
 
                     if let face = family.previewFace,
@@ -1504,15 +2048,18 @@ private struct FontInspector: View {
                         variableAxesSection(face: face, info: variableAxes.info)
                     }
 
+                    Divider()
+
+                    inspectorDetail(String(localized: "Source"), family.source.title)
                     if !family.isManaged {
                         Label(family.source.managementHint, systemImage: "lock")
                             .font(.callout)
                             .foregroundStyle(.secondary)
                     }
 
-                    Divider()
-
-                    classificationSection(for: family)
+                    if let metadata {
+                        metadataSection(metadata)
+                    }
                 }
                 .padding(20)
             }
@@ -1546,19 +2093,19 @@ private struct FontInspector: View {
             }
         } else if viewState.selection.count > 1 {
             ContentUnavailableView {
-                Label("\(viewState.selection.count) fonts selected", systemImage: "rectangle.split.2x1")
+                Label(String(localized: "\(viewState.selection.count) fonts selected"), systemImage: "rectangle.split.2x1")
             } description: {
-                Text("Compare them side by side, or select a single font to edit its details.")
+                Text(String(localized: "Compare them side by side, or select a single font to edit its details."))
             } actions: {
                 if let sources = catalog.mixedPairSources(in: viewState.selectedFamilies(catalog: catalog)) {
-                    Button("Create Mixed Pair") {
+                    Button(String(localized: "Create Mixed Pair")) {
                         viewState.createMixedPair(sources.japanese, sources.latin, catalog: catalog)
                     }
                 }
-                Button("Compare") { comparisonVisible = true }
+                Button(String(localized: "Compare")) { comparisonVisible = true }
             }
         } else {
-            ContentUnavailableView("Select a font", systemImage: "textformat")
+            ContentUnavailableView(String(localized: "Select a font"), systemImage: "textformat")
         }
     }
 
@@ -1580,7 +2127,8 @@ private struct FontInspector: View {
                     text: settings.effectiveMixedText(entered: viewState.previewText),
                     size: Self.previewSize,
                     lines: 2,
-                    fonts: fonts(for: pair)
+                    fonts: fonts(for: pair),
+                    typesetting: pair.options
                 )
 
                 Group {
@@ -1590,17 +2138,17 @@ private struct FontInspector: View {
                 }
 
                 if pair.references.contains(where: { !catalog.canResolve($0.reference) }) {
-                    Label("One of the fonts is no longer in the library.", systemImage: "exclamationmark.triangle")
+                    Label(String(localized: "One of the fonts is no longer in the library."), systemImage: "exclamationmark.triangle")
                         .font(.callout)
                         .foregroundStyle(.secondary)
                 }
 
                 Divider()
 
-                Button("Delete Pair", role: .destructive) {
+                Button(String(localized: "Delete Pair"), role: .destructive) {
                     catalog.removeMixedPair(pair)
                     viewState.selection = []
-                    viewState.reconcile(with: catalog)
+                    viewState.reconcile(with: catalog, settings: settings)
                 }
             }
             .padding(20)
@@ -1613,7 +2161,8 @@ private struct FontInspector: View {
             result[entry.script] = PreviewFaceSpec(
                 postScriptName: entry.reference.postScriptName,
                 fileURL: catalog.face(for: entry.reference)?.fileURL,
-                variations: settings.variationValues(for: entry.reference.postScriptName)
+                variations: settings.variationValues(for: entry.reference.postScriptName),
+                features: pair.options.features(for: entry.script)
             )
         }
     }
@@ -1626,33 +2175,6 @@ private struct FontInspector: View {
         return "\(family.name) \(face.styleName)"
     }
 
-    private func classificationBinding(for family: FontFamily) -> Binding<FontCategory> {
-        Binding(
-            get: { family.category },
-            set: { catalog.setCategory($0, for: family) }
-        )
-    }
-
-    /// The user-editable classification. While it differs from the value the
-    /// font file implies, the detected value stays visible as a caption.
-    private func classificationSection(for family: FontFamily) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            inspectorDetail("Classification") {
-                Picker("Classification", selection: classificationBinding(for: family)) {
-                    ForEach(FontCategory.allCases) { category in
-                        Text(category.title).tag(category)
-                    }
-                }
-                .labelsHidden()
-            }
-            if family.category != family.detectedCategory {
-                Text("Detected: \(family.detectedCategory.title)")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-        }
-    }
-
     // MARK: - File metadata
 
     /// The details read from the font file: version, glyph count, embedding
@@ -1661,30 +2183,26 @@ private struct FontInspector: View {
     @ViewBuilder
     private func metadataSection(_ metadata: FontNameTable.Metadata) -> some View {
         let hasSummary = metadata.versionNumber != nil
-            || metadata.glyphCount != nil
             || metadata.embedding != nil
             || metadata.designer != nil
         if hasSummary {
             Group {
                 if let version = metadata.versionNumber {
-                    inspectorDetail("Version", version)
-                }
-                if let glyphCount = metadata.glyphCount {
-                    inspectorDetail("Glyphs", glyphCount.formatted())
+                    inspectorDetail(String(localized: "Version"), version)
                 }
                 if let embedding = metadata.embedding {
-                    inspectorDetail("Embedding", embedding.title)
+                    inspectorDetail(String(localized: "Embedding"), embedding.title)
                 }
                 if let designer = metadata.designer {
-                    inspectorDetail("Designer", designer)
+                    inspectorDetail(String(localized: "Designer"), designer)
                 }
             }
         }
         if let copyright = metadata.copyright {
-            inspectorDetail("Copyright", copyright, lineLimit: 4)
+            inspectorDetail(String(localized: "Copyright"), copyright, lineLimit: 4)
         }
         if let license = metadata.license, license != metadata.copyright {
-            inspectorDetail("License", license, lineLimit: 4)
+            inspectorDetail(String(localized: "License"), license, lineLimit: 4)
         }
     }
 
@@ -1720,15 +2238,15 @@ private struct FontInspector: View {
     private func variableAxesSection(face: FontFace, info: VariableFontInfo) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Text("Variable Axes")
+                Text(String(localized: "Variable Axes"))
                     .font(.headline)
                 Spacer(minLength: 8)
-                Button("Reset") {
+                Button(String(localized: "Reset")) {
                     settings.resetVariations(for: face.postScriptName)
                 }
                 .controlSize(.small)
                 .disabled(settings.variationValues(for: face.postScriptName).isEmpty)
-                .help("Return to the style's own axis values")
+                .help(String(localized: "Return to the style's own axis values"))
             }
             ForEach(info.axes) { axis in
                 let binding = axisBinding(axis, face: face, info: info)
@@ -1785,15 +2303,15 @@ private struct FontInspector: View {
         let list = visible.joined(separator: " ")
         return Label {
             Text(remaining > 0
-                ? "Missing characters: \(list) … (+\(remaining))"
-                : "Missing characters: \(list)")
+                ? String(localized: "Missing characters: \(list) … (+\(remaining))")
+                : String(localized: "Missing characters: \(list)"))
         } icon: {
             Image(systemName: "exclamationmark.triangle")
         }
         .font(.callout)
         .foregroundStyle(.secondary)
         .textSelection(.enabled)
-        .help("The selected font cannot display these characters of the preview text")
+        .help(String(localized: "The selected font cannot display these characters of the preview text"))
     }
 }
 
@@ -1802,6 +2320,51 @@ private struct FontInspector: View {
 private struct MissingCharactersKey: Equatable {
     let familyID: String
     let text: String
+}
+
+/// The icon-only label of the inspector header's actions, one size for both.
+private struct InspectorHeaderIcon: View {
+    let image: Image
+    let title: String
+
+    init(_ image: Image, title: String) {
+        self.image = image
+        self.title = title
+    }
+
+    var body: some View {
+        Label { Text(title) } icon: { image }
+            .labelStyle(.iconOnly)
+            .font(.system(size: 14, weight: .regular))
+            .imageScale(.medium)
+            .frame(width: 24, height: 24)
+            .contentShape(Rectangle())
+    }
+}
+
+/// A compact entry point to review duplicate files in the cleanup sheet.
+private struct DuplicateFilesSection: View {
+    @ObservedObject var catalog: FontCatalog
+    let duplicates: [FontDuplicate]
+    @State private var showsCleanup = false
+
+    var body: some View {
+        Button { showsCleanup = true } label: {
+            // The 14 pt cut keeps its strokes on whole pixels beside doc.on.doc.
+            InspectorHeaderIcon(Image("font.duplicate.small"), title: String(localized: "Duplicates"))
+                // A borderless button draws its icon in the secondary color;
+                // the Copy Name menu beside it draws in the primary one.
+                .foregroundStyle(.primary)
+        }
+        .buttonStyle(.plain)
+        .fixedSize()
+        .frame(width: 24, height: 24)
+        .disabled(catalog.isLoading || catalog.isUpdatingActivation)
+        .help(String(localized: "Clean Up Duplicates…"))
+        .sheet(isPresented: $showsCleanup) {
+            DuplicateCleanupView(catalog: catalog, duplicates: duplicates)
+        }
+    }
 }
 
 private struct ComparisonView: View {
@@ -1819,14 +2382,14 @@ private struct ComparisonView: View {
         VStack(spacing: 0) {
             VStack(spacing: 12) {
                 HStack {
-                    Text("Compare")
+                    Text(String(localized: "Compare"))
                         .font(.title3.weight(.semibold))
                     Spacer()
-                    Button("Done") { dismiss() }
+                    Button(String(localized: "Done")) { dismiss() }
                         .keyboardShortcut(.defaultAction)
                 }
                 HStack(spacing: 10) {
-                    TextField("Sample text", text: $viewState.previewText)
+                    TextField(String(localized: "Sample text"), text: $viewState.previewText)
                         .textFieldStyle(.roundedBorder)
                     Slider(value: $settings.previewSize, in: AppSettings.previewSizeRange, step: 1)
                         .frame(width: 120)
@@ -1840,7 +2403,7 @@ private struct ComparisonView: View {
             .padding(16)
             Divider()
             if families.isEmpty {
-                ContentUnavailableView("Nothing to compare", systemImage: "rectangle.split.2x1")
+                ContentUnavailableView(String(localized: "Nothing to compare"), systemImage: "rectangle.split.2x1")
             } else {
                 List {
                     ForEach(families) { family in
@@ -1858,7 +2421,7 @@ private struct ComparisonView: View {
                                     Image(systemName: "minus.circle")
                                 }
                                 .buttonStyle(.borderless)
-                                .help("Remove from comparison")
+                                .help(String(localized: "Remove from comparison"))
                             }
                             FontPreviewText(
                                 text: settings.effectivePreviewText(for: family, entered: viewState.previewText),
@@ -1885,12 +2448,11 @@ private struct ComparisonView: View {
     ContentView()
         .environmentObject(FontCatalog())
         .environmentObject(AppSettings())
-        .environmentObject(PlaygroundStore())
         .environmentObject(MixedPairDraft())
 }
 
 /// The open library windows, so app-wide commands and alerts reach exactly one
-/// of them even while another window (PlayGround, Settings) is key.
+/// of them even while another window (Settings, a mixed pair) is key.
 @MainActor
 enum LibraryWindows {
     static let id = "library"
@@ -1968,7 +2530,7 @@ private struct SidebarLabel: View {
             Text(title)
                 .foregroundStyle(Color(nsColor: .labelColor))
         } icon: {
-            SourceIconView(icon: icon)
+            SidebarIcon(icon: icon)
                 .foregroundStyle(Color(nsColor: .secondaryLabelColor))
         }
         // Sidebar and OutlineGroup can otherwise reduce nested rows to the
@@ -2019,9 +2581,9 @@ private struct PreviewTextEditor: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            TextField("Enter preview text…", text: $viewState.previewText)
+            TextField(String(localized: "Enter preview text…"), text: $viewState.previewText)
                 .textFieldStyle(.plain)
-                .accessibilityLabel("Preview text")
+                .accessibilityLabel(String(localized: "Preview text"))
 
             HStack(spacing: 10) {
                 Menu {
@@ -2041,7 +2603,7 @@ private struct PreviewTextEditor: View {
                             }
                         }
                         Divider()
-                        Menu("Remove Preset") {
+                        Menu(String(localized: "Remove Preset")) {
                             ForEach(customPresets) { preset in
                                 Button(preset.name, role: .destructive) {
                                     removePreset(preset)
@@ -2056,7 +2618,7 @@ private struct PreviewTextEditor: View {
                 }
                 .menuStyle(.borderlessButton)
                 .fixedSize()
-                .help("Choose preview text")
+                .help(String(localized: "Choose preview text"))
 
                 Button {
                     presentAddPreset()
@@ -2066,8 +2628,8 @@ private struct PreviewTextEditor: View {
                         .contentShape(.rect)
                 }
                 .buttonStyle(.plain)
-                .help("Add a preset with a name and preview text")
-                .accessibilityLabel("Add a preset with a name and preview text")
+                .help(String(localized: "Add a preset with a name and preview text"))
+                .accessibilityLabel(String(localized: "Add a preset with a name and preview text"))
                 .popover(isPresented: $isAddingPreset, arrowEdge: .top) {
                     addPresetForm
                 }
@@ -2076,10 +2638,6 @@ private struct PreviewTextEditor: View {
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
         .frame(maxWidth: 720)
-        .background {
-            RoundedRectangle(cornerRadius: 14)
-                .fill(Color(nsColor: .windowBackgroundColor).opacity(0.75))
-        }
         .glassEffect(.regular, in: .rect(cornerRadius: 14))
         // Each library window has its own editor; follow presets saved by the
         // others.
@@ -2108,22 +2666,22 @@ private struct PreviewTextEditor: View {
         if let preset = Self.builtInPresets.first(where: { $0.text == text }) {
             return preset.title
         }
-        return trimmedPreviewText.isEmpty ? "Presets" : "Custom"
+        return trimmedPreviewText.isEmpty ? String(localized: "Presets") : String(localized: "Custom")
     }
 
     /// The form behind the “+” button: a preset name and the preview text it
     /// inserts, starting from the text that is already in the field.
     private var addPresetForm: some View {
         VStack(alignment: .leading, spacing: 14) {
-            presetField("Name", prompt: "e.g. abc, lorem, symbols", text: $newPresetName)
+            presetField(String(localized: "Name"), prompt: String(localized: "e.g. abc, lorem, symbols"), text: $newPresetName)
                 .focused($newPresetNameFocused)
-            presetField("Preview Text", prompt: "Sample preview text", text: $newPresetText)
+            presetField(String(localized: "Preview Text"), prompt: String(localized: "Sample preview text"), text: $newPresetText)
 
             HStack {
-                Button("Cancel") { isAddingPreset = false }
+                Button(String(localized: "Cancel")) { isAddingPreset = false }
                     .keyboardShortcut(.cancelAction)
                 Spacer(minLength: 8)
-                Button("Save") { savePreset() }
+                Button(String(localized: "Save")) { savePreset() }
                     .keyboardShortcut(.defaultAction)
                     .disabled(trimmedNewPresetName.isEmpty || trimmedNewPresetText.isEmpty)
             }
@@ -2198,5 +2756,58 @@ private struct PreviewTextEditor: View {
             customPresets.map { ["name": $0.name, "text": $0.text] },
             forKey: Self.presetsKey
         )
+    }
+}
+
+/// A three-state control toggles every file in the folder with one click.
+private struct FolderActivationControl: View {
+    @ObservedObject var catalog: FontCatalog
+    let folder: URL
+    @Environment(\.undoManager) private var undoManager
+
+    private var files: [FontActivationState] { catalog.activationStates(in: folder) }
+    private var activeCount: Int { files.filter(\.enabled).count }
+    private var status: String {
+        if files.isEmpty { return String(localized: "No Fonts") }
+        if activeCount == files.count { return String(localized: "All Active") }
+        if activeCount == 0 { return String(localized: "All Inactive") }
+        return String(localized: "Partially Active")
+    }
+    private var symbol: String {
+        if files.isEmpty || activeCount == 0 { return "circle" }
+        return activeCount == files.count ? "circle.fill" : "circle.lefthalf.filled"
+    }
+
+    var body: some View {
+        Button {
+            catalog.setEnabled(activeCount != files.count, in: folder, undoManager: undoManager)
+        } label: {
+            SidebarIcon(icon: .symbol(symbol))
+                .foregroundStyle(activeCount > 0 ? activationTint : Color.secondary)
+                .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .disabled(files.isEmpty || catalog.isLoading || catalog.isUpdatingActivation)
+        .help(String(localized: "Active font files: \(activeCount) / \(files.count)"))
+        .accessibilityLabel(Text(verbatim: folder.lastPathComponent + ": " + status))
+        .accessibilityValue(Text(String(localized: "Active font files: \(activeCount) / \(files.count)")))
+    }
+}
+
+private struct FolderActivationActions: View {
+    @ObservedObject var catalog: FontCatalog
+    let folder: URL
+    @Environment(\.undoManager) private var undoManager
+
+    var body: some View {
+        let files = catalog.activationStates(in: folder)
+        Button(String(localized: "Activate All Fonts")) {
+            catalog.setEnabled(true, in: folder, undoManager: undoManager)
+        }
+        .disabled(catalog.isLoading || catalog.isUpdatingActivation || !files.contains { !$0.enabled })
+        Button(String(localized: "Deactivate All Fonts")) {
+            catalog.setEnabled(false, in: folder, undoManager: undoManager)
+        }
+        .disabled(catalog.isLoading || catalog.isUpdatingActivation || !files.contains(where: \.enabled))
     }
 }

@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+<!-- design/mixed-font-icon/tools/build_symbols.py が書き出す。直接編集しない。 -->
+<svg version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="3300" height="2200">
+ <style>
+.monochrome-0 {-sfsymbols-motion-group:0}
+.multicolor-0:tintColor {-sfsymbols-motion-group:0;fill:#007AFF}
+.hierarchical-0:primary {-sfsymbols-motion-group:0;fill:#000000}
+.SFSymbolsPreviewWireframe {fill:none;opacity:1.0;stroke:black;stroke-width:0.5}
+ </style>
+ <g id="Notes">
+  <rect height="2200" id="artboard" style="fill:white;opacity:1" width="3300" x="0" y="0"/>
+  <text id="template-version" style="stroke:none;fill:black;font-family:sans-serif;font-size:13;text-anchor:end;" transform="matrix(1 0 0 1 3036 1933)">Template v.5.0</text>
+  <text id="descriptive-name" style="stroke:none;fill:black;font-family:sans-serif;font-size:13;text-anchor:end;" transform="matrix(1 0 0 1 3036 1953)">font.duplicate.small</text>
+ </g>
+ <g id="Guides">
+  <line id="Baseline-S" style="fill:none;stroke:#27AAE1;opacity:1;stroke-width:0.5;" x1="263" x2="3036" y1="696" y2="696"/>
+  <line id="Capline-S" style="fill:none;stroke:#27AAE1;opacity:1;stroke-width:0.5;" x1="263" x2="3036" y1="625.541" y2="625.541"/>
+  <line id="Baseline-M" style="fill:none;stroke:#27AAE1;opacity:1;stroke-width:0.5;" x1="263" x2="3036" y1="1126" y2="1126"/>
+  <line id="Capline-M" style="fill:none;stroke:#27AAE1;opacity:1;stroke-width:0.5;" x1="263" x2="3036" y1="1055.541" y2="1055.541"/>
+  <line id="Baseline-L" style="fill:none;stroke:#27AAE1;opacity:1;stroke-width:0.5;" x1="263" x2="3036" y1="1556" y2="1556"/>
+  <line id="Capline-L" style="fill:none;stroke:#27AAE1;opacity:1;stroke-width:0.5;" x1="263" x2="3036" y1="1485.541" y2="1485.541"/>
+  <line id="left-margin-Regular-M" style="fill:none;stroke:#00AEEF;stroke-width:0.5;opacity:1.0;" x1="1391.0" x2="1391.0" y1="1030.79" y2="1150.12"/>
+  <line id="right-margin-Regular-M" style="fill:none;stroke:#00AEEF;stroke-width:0.5;opacity:1.0;" x1="1498.868" x2="1498.868" y1="1030.79" y2="1150.12"/>
+ </g>
+ <g id="Symbols">
+  <g id="Regular-M" transform="matrix(1 0 0 1 1391.0 1126)">
+   <path class="monochrome-0 multicolor-0:tintColor hierarchical-0:primary" d="M21.79 -88.93C9.79 -88.93 0 -79.14 0 -67.14L0 -38.57C0 -26.57 9.79 -16.78 21.79 -16.78L28.93 -16.78L28.93 -24.65L21.79 -24.65C14.01 -24.65 7.868 -30.79 7.868 -38.57L7.868 -67.14C7.868 -74.93 14.01 -81.07 21.79 -81.07L50.36 -81.07C58.15 -81.07 64.29 -74.93 64.29 -67.14L72.15 -67.14C72.15 -79.14 62.36 -88.93 50.36 -88.93L21.79 -88.93Z"/>
+   <path class="monochrome-0 multicolor-0:tintColor hierarchical-0:primary" d="M57.51 -60.36C45.5 -60.36 35.71 -50.57 35.71 -38.57L35.71 -10C35.71 2.001 45.5 11.79 57.51 11.79L86.08 11.79C98.08 11.79 107.9 2.001 107.9 -10L107.9 -38.57C107.9 -50.57 98.08 -60.36 86.08 -60.36ZM57.51 -52.49L86.08 -52.49C93.86 -52.49 100 -46.36 100 -38.57L100 -10C100 -2.216 93.86 3.923 86.08 3.923L57.51 3.923C49.72 3.923 43.58 -2.216 43.58 -10L43.58 -38.57C43.58 -46.36 49.72 -52.49 57.51 -52.49Z"/>
+   <path class="monochrome-0 multicolor-0:tintColor hierarchical-0:primary" d="M71.79 -45.35C70.2 -45.35 68.77 -44.39 68.16 -42.92L53.88 -8.284C53.48 -7.32 53.48 -6.238 53.88 -5.275C54.28 -4.312 55.05 -3.547 56.01 -3.15C58.02 -2.329 60.31 -3.284 61.13 -5.285L71.79 -31.14L82.45 -5.285C83.28 -3.284 85.57 -2.329 87.57 -3.15C88.53 -3.547 89.3 -4.312 89.7 -5.275C90.1 -6.238 90.1 -7.32 89.7 -8.284L75.42 -42.92C74.81 -44.39 73.38 -45.35 71.79 -45.35Z"/>
+   <path class="monochrome-0 multicolor-0:tintColor hierarchical-0:primary" d="M62.86 -17.51C61.82 -17.51 60.82 -17.09 60.08 -16.35C59.34 -15.62 58.93 -14.62 58.93 -13.57C58.93 -12.53 59.34 -11.53 60.08 -10.79C60.82 -10.05 61.82 -9.636 62.86 -9.637L80.72 -9.637C81.76 -9.636 82.77 -10.05 83.5 -10.79C84.24 -11.53 84.66 -12.53 84.65 -13.57C84.66 -14.62 84.24 -15.62 83.5 -16.35C82.77 -17.09 81.76 -17.51 80.72 -17.51Z"/>
+  </g>
+ </g>
+</svg>
