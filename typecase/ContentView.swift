@@ -756,6 +756,7 @@ private struct FontLibraryView: View {
     @State private var expandedFamilyID: FontFamily.ID?
     @State private var cleanupDuplicates: [FontDuplicate] = []
     @State private var showsDuplicateCleanup = false
+    @State private var quickLook = QuickLookController()
 
     private var visibleIDs: [FontFamily.ID] {
         if isMixedSection { return filteredMixedPairs.map(\.selectionID) }
@@ -814,6 +815,17 @@ private struct FontLibraryView: View {
                 .listStyle(.inset)
                 .environment(\.controlActiveState, .key)
                 .focused($listFocused)
+                // Space toggles Quick Look as in Finder; the panel follows the
+                // selection, so the arrow keys keep moving through the list.
+                .onKeyPress(.space) {
+                    quickLook.toggle(catalog: catalog, viewState: viewState, settings: settings)
+                    return .handled
+                }
+                .onKeyPress(.escape) {
+                    guard quickLook.isVisible else { return .ignored }
+                    quickLook.close()
+                    return .handled
+                }
                 .simultaneousGesture(TapGesture().onEnded {
                     // A click into a field in a row, such as an axis value,
                     // has already given it the keyboard; don't take it back.
@@ -845,6 +857,7 @@ private struct FontLibraryView: View {
             viewState.updateCoverage(catalog: catalog)
         }
         .onAppear { reconcileSelection() }
+        .onDisappear { quickLook.close() }
         .onChange(of: visibleIDs) { _, ids in
             reconcileSelection(with: ids)
         }
@@ -885,6 +898,11 @@ private struct FontLibraryView: View {
         let targets = families.filter { ids.contains($0.id) }
         let fileURLs = Array(Set(targets.flatMap(\.fileURLs))).sorted { $0.path < $1.path }
         if let family = targets.first {
+            Button(String(localized: "Quick Look")) {
+                if !ids.isSubset(of: viewState.selection) { viewState.selection = [family.id] }
+                quickLook.show(catalog: catalog, viewState: viewState, settings: settings)
+            }
+            Divider()
             let duplicates = targets.flatMap { catalog.duplicatesByFamily[$0.id] ?? [] }
             if !duplicates.isEmpty {
                 Button(String(localized: "Clean Up Duplicates…")) {
